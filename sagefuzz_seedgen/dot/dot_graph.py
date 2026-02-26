@@ -25,10 +25,12 @@ class DotGraph:
     For our seedgen tools we only need labels, adjacency and basic path queries.
     """
 
-    def __init__(self, *, name: str, nodes: Dict[str, DotNode], edges: List[DotEdge]):
+    def __init__(self, *, name: str, nodes: Dict[str, DotNode], edges: List[DotEdge], nx_graph: object | None = None):
         self.name = name
         self._nodes = nodes
         self._edges = edges
+        # Keep the underlying NetworkX graph around for debugging/inspection and as a proof of nx-based loading.
+        self.nx_graph = nx_graph
         self._adj: Dict[str, List[DotEdge]] = {}
         for e in edges:
             self._adj.setdefault(e.src, []).append(e)
@@ -157,4 +159,3 @@ class DotGraph:
         if simplified and all(len(x) == 0 for x in simplified):
             return results[0]
         return simplified[0] if simplified else []
-

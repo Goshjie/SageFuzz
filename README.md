@@ -14,10 +14,14 @@ export AGNO_API_KEY=...
 export AGNO_MODEL_ID=doubao-seed-2.0-code
 export AGNO_BASE_URL=https://ark.cn-beijing.volces.com/api/coding/v3
 
+# Install deps (networkx+pydot are required to load DOT graphs)
+python3.12 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+
 python3.12 -m sagefuzz_seedgen.cli
 ```
 
 Tests (no model required):
 ```bash
-python3.12 -m unittest discover -s tests -p 'test_*.py' -q
+.venv/bin/python -m unittest discover -s tests -p 'test_*.py' -q
 ```
