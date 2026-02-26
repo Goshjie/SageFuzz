@@ -11,3 +11,9 @@ venv/
 
 runs/
 *.log
+
+# P4 build artifacts that are not required for seedgen code/tests
+*.pcap
+*.bak
+P4/**/logs/
+P4/**/pcaps/
