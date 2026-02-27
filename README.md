@@ -18,10 +18,18 @@ export AGNO_BASE_URL=https://ark.cn-beijing.volces.com/api/coding/v3
 python3.12 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 
-python3.12 -m sagefuzz_seedgen.cli
+# Option A: provide model+intent via config file (recommended)
+cp seedgen_config.example.yaml seedgen_config.yaml
+# edit seedgen_config.yaml (fill api_key and intent)
+.venv/bin/python -m sagefuzz_seedgen.cli --config seedgen_config.yaml
+
+# Option B: if intent is missing, Agent1 will ask questions interactively in the terminal.
 ```
 
 Tests (no model required):
 ```bash
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py' -q
 ```
+
+激活并使用
+source .venv/bin/activate

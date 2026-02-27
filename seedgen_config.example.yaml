@@ -8,6 +8,14 @@ model:
   base_url: https://ark.cn-beijing.volces.com/api/coding/v3
   api_key: "PUT_YOUR_API_KEY_HERE"
 
+# Required: user intent (this system is intent-driven)
+intent:
+  feature_under_test: "Stateful firewall directional TCP"
+  intent_text: "Only allow internal h1 to initiate TCP to external h3; h3 may only reply, and must not initiate."
+  internal_host: "h1"
+  external_host: "h3"
+  include_negative_external_initiation: true
+
 # Optional overrides (CLI defaults are used if omitted)
 run:
   max_retries: 4

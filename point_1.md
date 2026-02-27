@@ -379,7 +379,8 @@
 
 1. **指令下发：** 外部 Java 控制端向 Fuzzing 框架发送 `seed_generate` 启动指令。
 2. **中枢接管：** 系统主控调度器（Orchestrator）接管流程，唤醒**智能体一（语义分析师）**。
-3. **工具调用与扫图：** 智能体一调用宏观工具（如 `get_path_constraints`、`get_stateful_objects`、`get_ranked_tables`、`get_topology_hosts`）对已加载的 ProgramContext 进行证据化扫描，推断程序的网络状态记忆与核心业务意图。
+3. **用户意图输入（Intent is Required）：** 本系统是“意图驱动”系统。每次生成前，用户必须提供意图信息（至少包括：网络拓扑/角色划分、想测试的功能点/策略）。若缺少关键信息（例如 internal/external 角色或目标功能描述），语义分析师必须**反问用户**补齐，而不是凭空猜测。
+4. **工具调用与扫图：** 在用户意图的约束下，智能体一调用宏观工具（如 `get_path_constraints`、`get_stateful_objects`、`get_ranked_tables`、`get_topology_hosts`）对已加载的 ProgramContext 进行证据化扫描，推断程序的网络状态记忆与核心业务意图，并将“意图→可执行测试任务”结构化。
 4. **任务拆解：** 智能体一输出严格的 JSON 契约，将全局意图拆解为多个原子化的【测试任务】（包含数据面预期与控制面预期），交还给调度器。
 
 #### 阶段二：数据面先行生成与对抗审查 (Data-Plane Generation & Critic)

@@ -56,6 +56,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     if not isinstance(model_section, dict):
         model_section = {}
 
+    intent_section = cfg_data.get("intent", {})
+    if not isinstance(intent_section, dict):
+        intent_section = {}
+
     env_model = ModelConfig.from_env()
     model = ModelConfig(
         model_id=args.model_id or model_section.get("model_id") or env_model.model_id,
@@ -81,6 +85,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     cfg = RunConfig(
         program=program,
         model=model,
+        user_intent=intent_section or None,
         max_retries=int(run_section.get("max_retries")) if run_section.get("max_retries") else args.max_retries,
         out_path=args.out,
         session_state_path=args.session_state,

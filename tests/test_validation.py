@@ -20,6 +20,7 @@ class TestValidation(unittest.TestCase):
         task = TaskSpec(
             task_id="T",
             task_description="",
+            feature_under_test="firewall",
             internal_host="h1",
             external_host="h3",
             require_positive_handshake=True,
@@ -72,6 +73,7 @@ class TestValidation(unittest.TestCase):
         task = TaskSpec(
             task_id="T",
             task_description="",
+            feature_under_test="firewall",
             internal_host="h1",
             external_host="h3",
             require_positive_handshake=True,
@@ -97,4 +99,3 @@ class TestValidation(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

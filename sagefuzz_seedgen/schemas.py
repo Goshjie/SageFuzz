@@ -5,6 +5,23 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 
 
+class UserIntent(BaseModel):
+    """User-provided intent for this run.
+
+    This system is intent-driven. The user intent must describe:
+    - what feature/functionality to test
+    - how to interpret the topology (e.g. which host is internal/external)
+    """
+
+    feature_under_test: str = Field(..., description="What functionality to test, in user terms.")
+    intent_text: str = Field(..., description="Natural language description of the test intent.")
+    internal_host: Optional[str] = Field(None, description="Host id that can initiate (client).")
+    external_host: Optional[str] = Field(None, description="Host id that can only reply (server side).")
+    include_negative_external_initiation: Optional[bool] = Field(
+        None, description="Whether to add a negative case where external initiates."
+    )
+
+
 class TaskSpec(BaseModel):
     """High-level packet generation task produced by Semantic Analyzer.
 
@@ -13,6 +30,7 @@ class TaskSpec(BaseModel):
 
     task_id: str = Field(..., description="Stable id for this task.")
     task_description: str = Field(..., description="Human readable intent.")
+    feature_under_test: str = Field(..., description="What functionality to test (carried from user intent).")
     internal_host: str = Field(..., description="Host id that can initiate (client).")
     external_host: str = Field(..., description="Host id that can only reply (server side).")
     require_positive_handshake: bool = Field(
@@ -42,6 +60,14 @@ class CriticResult(BaseModel):
 class PacketSequenceCandidate(BaseModel):
     task_id: str
     packet_sequence: List[PacketSpec]
+
+
+class Agent1Output(BaseModel):
+    """Semantic Analyzer output: either a TaskSpec, or questions for the user."""
+
+    kind: Literal["task", "questions"]
+    task: Optional[TaskSpec] = None
+    questions: Optional[List[str]] = None
 
 
 class AttemptResult(BaseModel):

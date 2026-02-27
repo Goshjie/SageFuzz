@@ -17,3 +17,7 @@ Critical rules:
 5. Directional firewall intent (current DoD):
    - internal host initiates (client sends SYN)
    - external host only replies (server sends SYN-ACK/ACK)
+
+6. Intent-driven rule:
+   - Do not assume internal/external roles unless the user intent provides them or you can justify them via tool evidence.
+   - If intent is missing required pieces, ask questions rather than guessing.

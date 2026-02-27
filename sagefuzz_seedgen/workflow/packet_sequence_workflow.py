@@ -10,10 +10,12 @@ from sagefuzz_seedgen.config import RunConfig
 from sagefuzz_seedgen.runtime.initializer import initialize_program_context
 from sagefuzz_seedgen.schemas import (
     AttemptResult,
+    Agent1Output,
     PacketSequenceCandidate,
     TaskSpec,
     TestcaseOutput,
     TopologySummary,
+    UserIntent,
 )
 from sagefuzz_seedgen.tools.context_registry import set_program_context
 from sagefuzz_seedgen.topology.topology_loader import summarize_topology
@@ -67,12 +69,63 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
 
     agent1, agent2, _agent3, team = build_agents_and_team(model_cfg=cfg.model, prompts_dir=Path("prompts"))
 
-    # --- Step 1: Semantic analyzer produces a task spec ---
-    task: TaskSpec = agent1.run(
-        "Generate one TaskSpec for a directional stateful firewall test (internal initiates, external replies).",
-        output_schema=TaskSpec,
-        session_state=session_state,
-    ).content  # type: ignore[assignment]
+    # --- Step 1: Collect user intent (intent-driven system) ---
+    intent_data = cfg.user_intent or {}
+    try:
+        user_intent = UserIntent.model_validate(intent_data) if intent_data else None
+    except Exception:
+        # If the config intent is malformed, treat it as missing so Agent1 can ask questions.
+        user_intent = None
+
+    # --- Step 2: Semantic analyzer produces a task spec, or asks user questions ---
+    # If intent is missing, Agent1 MUST ask user; we will prompt in terminal and then re-run Agent1.
+    max_intent_rounds = 3
+    task: TaskSpec | None = None
+    for _round in range(1, max_intent_rounds + 1):
+        a1_in = {
+            "user_intent": user_intent.model_dump() if user_intent else None,
+            "note": "If user_intent is missing required fields, return questions instead of guessing.",
+        }
+        a1_out: Agent1Output = agent1.run(
+            a1_in,
+            output_schema=Agent1Output,
+            session_state=session_state,
+        ).content  # type: ignore[assignment]
+
+        if a1_out.kind == "task" and a1_out.task is not None:
+            task = a1_out.task
+            break
+
+        # Ask user and build a UserIntent object
+        qs = a1_out.questions or [
+            "Please provide feature_under_test, intent_text, internal_host, external_host (and whether to include negative external initiation)."
+        ]
+        print("\n[Agent1 needs more intent input]")
+        for i, q in enumerate(qs, 1):
+            print(f"{i}. {q}")
+
+        # Minimal interactive capture. This is intentionally simple; users can also provide intent via config file.
+        feature = input("\nfeature_under_test: ").strip()
+        intent_text = input("intent_text: ").strip()
+        internal_host = input("internal_host (e.g. h1): ").strip()
+        external_host = input("external_host (e.g. h3): ").strip()
+        neg = input("include_negative_external_initiation? [y/N]: ").strip().lower()
+        include_neg = neg in ("y", "yes", "true", "1")
+
+        try:
+            user_intent = UserIntent(
+                feature_under_test=feature,
+                intent_text=intent_text,
+                internal_host=internal_host or None,
+                external_host=external_host or None,
+                include_negative_external_initiation=include_neg,
+            )
+        except Exception:
+            user_intent = None
+            print("Invalid intent input; please try again.\n")
+
+    if task is None:
+        raise RuntimeError("Unable to obtain sufficient user intent to generate a task.")
 
     # Ensure defaults are present for this program if agent returns empty/unknown.
     if not task.internal_host:
@@ -84,12 +137,13 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
     last_attempt: Optional[AttemptResult] = None
     attempt_count: int = 0
 
-    # --- Step 2: Generate packet_sequence with critic loop ---
+    # --- Step 3: Generate packet_sequence with critic loop ---
     for attempt in range(1, cfg.max_retries + 1):
         attempt_count = attempt
         prompt = {
             "attempt": attempt,
             "task": task.model_dump(),
+            "user_intent": user_intent.model_dump() if user_intent else None,
             "previous_feedback": last_feedback,
             "requirements": {
                 "must_include_tx_host": True,

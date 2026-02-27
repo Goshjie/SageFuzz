@@ -4,7 +4,6 @@ from typing import List, Optional, Tuple
 
 from sagefuzz_seedgen.runtime.program_context import ProgramContext
 from sagefuzz_seedgen.schemas import CriticResult, PacketSpec, TaskSpec
-from sagefuzz_seedgen.topology.topology_loader import classify_host_zone
 
 
 def _get_flag(flags: object) -> str:
@@ -90,16 +89,22 @@ def validate_directional_tcp_state_trigger(
     if trip is not None:
         syn, synack, ack = trip
 
-        syn_zone = classify_host_zone(syn.tx_host, host_to_switch=ctx.host_to_switch)
-        synack_zone = classify_host_zone(synack.tx_host, host_to_switch=ctx.host_to_switch)
-        ack_zone = classify_host_zone(ack.tx_host, host_to_switch=ctx.host_to_switch)
-
-        if syn_zone != "internal":
-            return CriticResult(status="FAIL", feedback=f"Positive SYN must be sent by internal host; got {syn.tx_host} ({syn_zone})")
-        if synack_zone != "external":
-            return CriticResult(status="FAIL", feedback=f"Positive SYN-ACK must be sent by external host; got {synack.tx_host} ({synack_zone})")
-        if ack_zone != "internal":
-            return CriticResult(status="FAIL", feedback=f"Positive ACK must be sent by internal host; got {ack.tx_host} ({ack_zone})")
+        # Directionality is intent-driven: use explicit host roles from TaskSpec (derived from user intent).
+        if syn.tx_host != task.internal_host:
+            return CriticResult(
+                status="FAIL",
+                feedback=f"Positive SYN must be sent by internal_host '{task.internal_host}'; got '{syn.tx_host}'.",
+            )
+        if synack.tx_host != task.external_host:
+            return CriticResult(
+                status="FAIL",
+                feedback=f"Positive SYN-ACK must be sent by external_host '{task.external_host}'; got '{synack.tx_host}'.",
+            )
+        if ack.tx_host != task.internal_host:
+            return CriticResult(
+                status="FAIL",
+                feedback=f"Positive ACK must be sent by internal_host '{task.internal_host}'; got '{ack.tx_host}'.",
+            )
 
         syn_seq = _field_int(syn.fields, "TCP.seq")
         synack_seq = _field_int(synack.fields, "TCP.seq")
@@ -135,13 +140,11 @@ def validate_directional_tcp_state_trigger(
                 continue
             flags = _get_flag(p.fields.get("TCP.flags"))
             if "S" in flags and "A" not in flags:
-                zone = classify_host_zone(p.tx_host, host_to_switch=ctx.host_to_switch)
-                if zone != "external":
+                if p.tx_host != task.external_host:
                     return CriticResult(
                         status="FAIL",
-                        feedback="negative_external_initiation SYN must be sent by an external host.",
+                        feedback=f"negative_external_initiation SYN must be sent by external_host '{task.external_host}'.",
                     )
                 break
 
     return CriticResult(status="PASS", feedback="Directional TCP state trigger sequence is structurally valid.")
-

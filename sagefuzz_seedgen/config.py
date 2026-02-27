@@ -39,6 +39,8 @@ class ProgramPaths:
 class RunConfig:
     program: ProgramPaths
     model: Optional[ModelConfig]
+    # Raw user intent dictionary; parsed/validated by workflow.
+    user_intent: Optional[dict] = None
     max_retries: int = 4
     out_path: Optional[Path] = None
     session_state_path: Optional[Path] = None
