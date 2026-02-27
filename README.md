@@ -14,7 +14,7 @@ export AGNO_API_KEY=...
 export AGNO_MODEL_ID=doubao-seed-2.0-code
 export AGNO_BASE_URL=https://ark.cn-beijing.volces.com/api/coding/v3
 
-# Install deps (networkx+pydot are required to load DOT graphs)
+# Install deps (networkx+pydot are required to load DOT graphs; `openai` is required for OpenAILike)
 python3.12 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 

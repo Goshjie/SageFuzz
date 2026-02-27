@@ -12,6 +12,11 @@ venv/
 runs/
 *.log
 
+# Local config files (may contain API keys)
+seedgen_config.yaml
+seedgen_config.yml
+seedgen_config.json
+
 # P4 build artifacts that are not required for seedgen code/tests
 *.pcap
 *.bak

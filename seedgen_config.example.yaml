@@ -1,0 +1,19 @@
+# Copy this file to `seedgen_config.yaml` and fill in your API key.
+#
+# NOTE: `seedgen_config.yaml` is gitignored to avoid accidentally committing secrets.
+
+model:
+  # OpenAI-like model id (Volc Ark example from seed_agno_test.py / README)
+  model_id: doubao-seed-2.0-code
+  base_url: https://ark.cn-beijing.volces.com/api/coding/v3
+  api_key: "PUT_YOUR_API_KEY_HERE"
+
+# Optional overrides (CLI defaults are used if omitted)
+run:
+  max_retries: 4
+
+paths:
+  bmv2_json: P4/firewall/build/firewall.json
+  graphs_dir: P4/firewall/build/graphs
+  p4info: P4/firewall/build/firewall.p4.p4info.txtpb
+  topology: P4/firewall/pod-topo/topology.json
