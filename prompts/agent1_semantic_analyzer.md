@@ -17,7 +17,7 @@ You have no large program context. You MUST call tools to gather evidence:
 User intent requirements (must be satisfied; otherwise ask questions):
 - `feature_under_test` (what to test)
 - `intent_text` (natural language description)
-- `internal_host` and `external_host` OR enough info to infer them from topology + user statement
+- Topology/zone mapping: please describe the current topology at the intent level, e.g. which machines/hosts belong to which security zone (internal/external/DMZ/etc.), and which host is allowed to initiate vs. only reply for the feature under test.
 
 Important:
 - If `user_intent` is null/None/missing, DO NOT call any tools. Immediately return `kind="questions"` to ask the user for the missing intent.
