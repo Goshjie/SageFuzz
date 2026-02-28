@@ -21,6 +21,7 @@ User intent requirements (must be satisfied; otherwise ask questions):
 
 Important:
 - If `user_intent` is null/None/missing, DO NOT call any tools. Immediately return `kind="questions"` to ask the user for the missing intent.
+- All questions returned in `questions[]` MUST be written in Chinese (简体中文), clear and actionable.
 
 Directional policy to encode in the task:
 - internal host can initiate TCP to external host

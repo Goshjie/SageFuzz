@@ -104,18 +104,18 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
 
         # Ask user and build a UserIntent object
         qs = a1_out.questions or [
-            "Please provide feature_under_test, intent_text, internal_host, external_host (and whether to include negative external initiation)."
+            "请补充本次测试的意图信息：要测试的功能点（feature_under_test）、意图描述（intent_text）、internal_host、external_host，以及是否需要包含外部主动发起的负例（include_negative_external_initiation）。"
         ]
         print("\n[Agent1 needs more intent input]")
         for i, q in enumerate(qs, 1):
             print(f"{i}. {q}")
 
         # Minimal interactive capture. This is intentionally simple; users can also provide intent via config file.
-        feature = input("\nfeature_under_test: ").strip()
-        intent_text = input("intent_text: ").strip()
-        internal_host = input("internal_host (e.g. h1): ").strip()
-        external_host = input("external_host (e.g. h3): ").strip()
-        neg = input("include_negative_external_initiation? [y/N]: ").strip().lower()
+        feature = input("\n请输入 feature_under_test（要测试的功能点）: ").strip()
+        intent_text = input("请输入 intent_text（意图/策略描述）: ").strip()
+        internal_host = input("请输入 internal_host（例如 h1）: ").strip()
+        external_host = input("请输入 external_host（例如 h3）: ").strip()
+        neg = input("是否包含外部主动发起的负例 include_negative_external_initiation？[y/N]: ").strip().lower()
         include_neg = neg in ("y", "yes", "true", "1")
 
         try:
