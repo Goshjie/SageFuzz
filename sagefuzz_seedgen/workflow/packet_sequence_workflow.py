@@ -11,6 +11,7 @@ from sagefuzz_seedgen.runtime.initializer import initialize_program_context
 from sagefuzz_seedgen.schemas import (
     AttemptResult,
     Agent1Output,
+    CriticResult,
     PacketSequenceCandidate,
     TaskSpec,
     TestcaseOutput,
@@ -67,7 +68,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
     if cfg.model is None:
         raise ValueError("ModelConfig is required to run agents.")
 
-    agent1, agent2, _agent3, team = build_agents_and_team(model_cfg=cfg.model, prompts_dir=Path("prompts"))
+    agent1, agent2, agent3, team = build_agents_and_team(model_cfg=cfg.model, prompts_dir=Path("prompts"))
 
     # --- Step 1: Collect user intent (intent-driven system) ---
     intent_data = cfg.user_intent or {}
@@ -86,8 +87,13 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             "user_intent": user_intent.model_dump() if user_intent else None,
             "note": "If user_intent is missing required fields, return questions instead of guessing.",
         }
+        a1_in_str = (
+            "You are Agent1. Here is the user_intent JSON (may be null). "
+            "If missing required information, ask questions.\n\n"
+            + json.dumps(a1_in, indent=2)
+        )
         a1_out: Agent1Output = agent1.run(
-            a1_in,
+            a1_in_str,
             output_schema=Agent1Output,
             session_state=session_state,
         ).content  # type: ignore[assignment]
@@ -140,53 +146,36 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
     # --- Step 3: Generate packet_sequence with critic loop ---
     for attempt in range(1, cfg.max_retries + 1):
         attempt_count = attempt
-        prompt = {
+        gen_in = {
             "attempt": attempt,
             "task": task.model_dump(),
             "user_intent": user_intent.model_dump() if user_intent else None,
             "previous_feedback": last_feedback,
-            "requirements": {
-                "must_include_tx_host": True,
-                "positive_handshake_required": True,
-                "negative_external_initiation_optional": task.include_negative_external_initiation,
-            },
         }
+        gen_in_str = (
+            "Generate PacketSequenceCandidate STRICT JSON. Input:\n\n" + json.dumps(gen_in, indent=2)
+        )
+        cand_out = agent2.run(
+            gen_in_str,
+            output_schema=PacketSequenceCandidate,
+            session_state=session_state,
+        )
+        candidate: PacketSequenceCandidate = cand_out.content  # type: ignore[assignment]
 
-        try:
-            # Preferred: use Team so the leader can coordinate member interactions.
-            run_out = team.run(
-                {
-                    "instruction": (
-                        "Coordinate the team to produce an AttemptResult JSON. "
-                        "Ask Sequence Constructor to generate packet_sequence, then ask Constraint Critic to evaluate it. "
-                        "Return {task_id, packet_sequence, critic:{status,feedback}} only."
-                    ),
-                    "input": prompt,
-                },
-                output_schema=AttemptResult,
-                session_state=session_state,
-                yield_run_output=True,
-            )
-            # Team.run may return TeamRunOutput if yield_run_output=True; normalize.
-            content = getattr(run_out, "content", None)
-            if isinstance(content, AttemptResult):
-                attempt_result = content
-            else:
-                # Fallback: try parsing if content is a dict
-                attempt_result = AttemptResult.model_validate(content)
-        except Exception:
-            # Fallback path: call the generator agent directly and use deterministic validator.
-            cand_out = agent2.run(
-                {
-                    "task": task.model_dump(),
-                    "previous_feedback": last_feedback,
-                },
-                output_schema=PacketSequenceCandidate,
-                session_state=session_state,
-            )
-            candidate: PacketSequenceCandidate = cand_out.content  # type: ignore[assignment]
-            critic = validate_directional_tcp_state_trigger(ctx=ctx, task=task, packet_sequence=candidate.packet_sequence)
-            attempt_result = AttemptResult(task_id=task.task_id, packet_sequence=candidate.packet_sequence, critic=critic)
+        critic_in = {
+            "task": task.model_dump(),
+            "user_intent": user_intent.model_dump() if user_intent else None,
+            "packet_sequence_candidate": candidate.model_dump(),
+        }
+        critic_in_str = "Evaluate candidate and return CriticResult STRICT JSON:\n\n" + json.dumps(critic_in, indent=2)
+        critic_out = agent3.run(
+            critic_in_str,
+            output_schema=CriticResult,
+            session_state=session_state,
+        )
+        llm_critic: CriticResult = critic_out.content  # type: ignore[assignment]
+
+        attempt_result = AttemptResult(task_id=task.task_id, packet_sequence=candidate.packet_sequence, critic=llm_critic)
 
         # Always run deterministic validator as the ground truth for this stage's DoD.
         det = validate_directional_tcp_state_trigger(ctx=ctx, task=task, packet_sequence=attempt_result.packet_sequence)

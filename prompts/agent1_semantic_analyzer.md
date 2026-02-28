@@ -19,6 +19,9 @@ User intent requirements (must be satisfied; otherwise ask questions):
 - `intent_text` (natural language description)
 - `internal_host` and `external_host` OR enough info to infer them from topology + user statement
 
+Important:
+- If `user_intent` is null/None/missing, DO NOT call any tools. Immediately return `kind="questions"` to ask the user for the missing intent.
+
 Directional policy to encode in the task:
 - internal host can initiate TCP to external host
 - external host must NOT initiate TCP to internal host (it may only reply)
