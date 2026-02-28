@@ -22,3 +22,4 @@ Critical rules:
    - Do not assume internal/external roles unless the user intent provides them or you can justify them via tool evidence.
    - If intent is missing required pieces, ask questions rather than guessing.
    - If you ask the user questions, the questions must be in Chinese (简体中文).
+   - When asking questions, use structured `UserQuestion` objects (field + question_zh + required + expected_format) so the orchestrator can collect answers.

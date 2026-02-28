@@ -21,6 +21,7 @@ from sagefuzz_seedgen.schemas import (
 from sagefuzz_seedgen.tools.context_registry import set_program_context
 from sagefuzz_seedgen.topology.topology_loader import summarize_topology
 from sagefuzz_seedgen.workflow.validation import validate_directional_tcp_state_trigger
+from sagefuzz_seedgen.workflow.recorder import AgentRecorder
 
 
 def _utc_ts() -> str:
@@ -44,6 +45,9 @@ def _write_json_file(path: Path, data: Any) -> None:
 
 
 def run_packet_sequence_generation(cfg: RunConfig) -> Path:
+    run_id = _utc_ts()
+    recorder = AgentRecorder(base_dir=Path("runs"), run_id=run_id)
+
     ctx = initialize_program_context(
         bmv2_json_path=cfg.program.bmv2_json,
         graphs_dir=cfg.program.graphs_dir,
@@ -97,35 +101,62 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             output_schema=Agent1Output,
             session_state=session_state,
         ).content  # type: ignore[assignment]
+        recorder.record(
+            agent_role="agent1_semantic_analyzer",
+            step="agent1_output",
+            round_id=_round,
+            model_input=a1_in,
+            model_output=a1_out.model_dump(),
+        )
 
         if a1_out.kind == "task" and a1_out.task is not None:
             task = a1_out.task
             break
 
         # Ask user and build a UserIntent object
-        qs = a1_out.questions or [
-            "请补充本次测试的意图信息：要测试的功能点（feature_under_test）、意图描述（intent_text）、internal_host、external_host，以及是否需要包含外部主动发起的负例（include_negative_external_initiation）。"
-        ]
+        qs = a1_out.questions or []
         print("\n[Agent1 needs more intent input]")
-        for i, q in enumerate(qs, 1):
-            print(f"{i}. {q}")
+        if not qs:
+            # Safety fallback if the model returned no structured questions.
+            print("1. 请补充本次测试的意图信息：要测试的功能点、意图/策略描述、拓扑/安全域划分、internal_host、external_host、是否包含外部主动发起的负例。")
+            qs = [
+                # Best-effort fields to collect:
+                # Note: we keep this minimal; Agent1 should normally provide structured questions.
+                {"field": "feature_under_test", "question_zh": "请输入 feature_under_test（要测试的功能点）:", "required": True},
+                {"field": "intent_text", "question_zh": "请输入 intent_text（意图/策略描述）:", "required": True},
+                {"field": "topology_zone_mapping", "question_zh": "请描述拓扑/安全域划分（例如：h1,h2 属于 internal；h3,h4 属于 external）:", "required": True},
+                {"field": "internal_host", "question_zh": "请输入 internal_host（例如 h1）:", "required": True},
+                {"field": "external_host", "question_zh": "请输入 external_host（例如 h3）:", "required": True},
+                {"field": "include_negative_external_initiation", "question_zh": "是否包含外部主动发起的负例？[y/N]:", "required": False},
+            ]
 
-        # Minimal interactive capture. This is intentionally simple; users can also provide intent via config file.
-        feature = input("\n请输入 feature_under_test（要测试的功能点）: ").strip()
-        intent_text = input("请输入 intent_text（意图/策略描述）: ").strip()
-        internal_host = input("请输入 internal_host（例如 h1）: ").strip()
-        external_host = input("请输入 external_host（例如 h3）: ").strip()
-        neg = input("是否包含外部主动发起的负例 include_negative_external_initiation？[y/N]: ").strip().lower()
-        include_neg = neg in ("y", "yes", "true", "1")
+        answers: Dict[str, Any] = {}
+        for i, q in enumerate(qs, 1):
+            # q may be a UserQuestion or a dict fallback.
+            if hasattr(q, "field"):
+                field = q.field  # type: ignore[attr-defined]
+                qtext = q.question_zh  # type: ignore[attr-defined]
+            else:
+                field = q.get("field")
+                qtext = q.get("question_zh")
+            if not isinstance(field, str) or not isinstance(qtext, str):
+                continue
+            ans = input(f"{i}. {qtext} ").strip()
+            if ans == "":
+                continue
+            if field == "include_negative_external_initiation":
+                answers[field] = ans.lower() in ("y", "yes", "true", "1", "是", "对")
+            else:
+                answers[field] = ans
+
+        # Merge answers into existing intent (if any)
+        merged: Dict[str, Any] = {}
+        if user_intent is not None:
+            merged.update(user_intent.model_dump())
+        merged.update(answers)
 
         try:
-            user_intent = UserIntent(
-                feature_under_test=feature,
-                intent_text=intent_text,
-                internal_host=internal_host or None,
-                external_host=external_host or None,
-                include_negative_external_initiation=include_neg,
-            )
+            user_intent = UserIntent.model_validate(merged)
         except Exception:
             user_intent = None
             print("Invalid intent input; please try again.\n")
@@ -161,6 +192,13 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             session_state=session_state,
         )
         candidate: PacketSequenceCandidate = cand_out.content  # type: ignore[assignment]
+        recorder.record(
+            agent_role="agent2_sequence_constructor",
+            step="packet_sequence_candidate",
+            round_id=attempt,
+            model_input=gen_in,
+            model_output=candidate.model_dump(),
+        )
 
         critic_in = {
             "task": task.model_dump(),
@@ -174,6 +212,13 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             session_state=session_state,
         )
         llm_critic: CriticResult = critic_out.content  # type: ignore[assignment]
+        recorder.record(
+            agent_role="agent3_constraint_critic",
+            step="critic_result",
+            round_id=attempt,
+            model_input=critic_in,
+            model_output=llm_critic.model_dump(),
+        )
 
         attempt_result = AttemptResult(task_id=task.task_id, packet_sequence=candidate.packet_sequence, critic=llm_critic)
 
@@ -181,6 +226,13 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         det = validate_directional_tcp_state_trigger(ctx=ctx, task=task, packet_sequence=attempt_result.packet_sequence)
         if det.status == "FAIL":
             attempt_result.critic = det
+        recorder.record(
+            agent_role="deterministic_validator",
+            step="deterministic_validation",
+            round_id=attempt,
+            model_input={"task": task.model_dump(), "packet_sequence": [p.model_dump() for p in attempt_result.packet_sequence]},
+            model_output=attempt_result.critic.model_dump(),
+        )
 
         last_attempt = attempt_result
         last_feedback = attempt_result.critic.feedback
