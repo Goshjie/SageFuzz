@@ -1,12 +1,8 @@
-import json
-import tempfile
 import unittest
-from pathlib import Path
 
-from sagefuzz_seedgen.schemas import OraclePredictionCandidate, PacketSpec, RuntimePacketObservation
+from sagefuzz_seedgen.schemas import OraclePredictionCandidate, PacketSpec
 from sagefuzz_seedgen.workflow.packet_sequence_workflow import (
-    _compare_oracle_prediction_to_runtime,
-    _load_runtime_observations,
+    _fallback_oracle_prediction,
     _validate_oracle_prediction_candidate,
 )
 
@@ -68,55 +64,17 @@ class TestOraclePredictionHelpers(unittest.TestCase):
         assert feedback is not None
         self.assertIn("missing packet_id", feedback)
 
-    def test_compare_oracle_prediction_pending_runtime(self) -> None:
-        out = _compare_oracle_prediction_to_runtime(
-            prediction=self._prediction(),
-            runtime_packets=None,
+    def test_fallback_oracle_prediction(self) -> None:
+        fallback = _fallback_oracle_prediction(
+            task_id="T2",
+            scenario="negative_probe",
+            packet_sequence=self._packets(),
+            reason="schema parse failed",
         )
-        self.assertEqual(out["status"], "PENDING_RUNTIME")
-        self.assertEqual(out["total_packets"], 2)
-
-    def test_compare_oracle_prediction_match(self) -> None:
-        runtime = [
-            RuntimePacketObservation(packet_id=1, observed_outcome="deliver", observed_rx_host="h2"),
-            RuntimePacketObservation(packet_id=2, observed_outcome="drop"),
-        ]
-        out = _compare_oracle_prediction_to_runtime(
-            prediction=self._prediction(),
-            runtime_packets=runtime,
-        )
-        self.assertEqual(out["status"], "MATCH")
-        self.assertEqual(len(out["mismatches"]), 0)
-
-    def test_compare_oracle_prediction_mismatch(self) -> None:
-        runtime = [
-            RuntimePacketObservation(packet_id=1, observed_outcome="drop"),
-            RuntimePacketObservation(packet_id=2, observed_outcome="drop"),
-        ]
-        out = _compare_oracle_prediction_to_runtime(
-            prediction=self._prediction(),
-            runtime_packets=runtime,
-        )
-        self.assertEqual(out["status"], "MISMATCH")
-        self.assertGreaterEqual(len(out["mismatches"]), 1)
-
-    def test_load_runtime_observations(self) -> None:
-        payload = {
-            "scenarios": {
-                "positive_main": {
-                    "packets": [
-                        {"packet_id": 1, "observed_outcome": "deliver", "observed_rx_host": "h2"},
-                        {"packet_id": 2, "observed_outcome": "drop"},
-                    ]
-                }
-            }
-        }
-        with tempfile.TemporaryDirectory() as tmpdir:
-            p = Path(tmpdir) / "runtime_obs.json"
-            p.write_text(json.dumps(payload), encoding="utf-8")
-            out = _load_runtime_observations(p)
-        self.assertIn("positive_main", out)
-        self.assertEqual(len(out["positive_main"]), 2)
+        self.assertEqual(fallback.task_id, "T2")
+        self.assertEqual(fallback.scenario, "negative_probe")
+        self.assertEqual(len(fallback.packet_predictions), 2)
+        self.assertTrue(all(item.expected_outcome == "unknown" for item in fallback.packet_predictions))
 
 
 if __name__ == "__main__":

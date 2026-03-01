@@ -351,7 +351,7 @@
 
 ### 智能体六：预言机结果规划师 (Oracle Prediction Planner Agent)
 
-这是一个**通用预言机预测智能体**，不绑定某个具体 P4 程序（例如不只服务于 stateful firewall）。它的作用是给出“每个输入包在当前测试场景下的可观测预期”，用于后续与真实运行结果自动比对。
+这是一个**通用预言机预测智能体**，不绑定某个具体 P4 程序（例如不只服务于 stateful firewall）。它的作用是给出“每个输入包在当前测试场景下的可观测预期”，作为离线执行前的判定参考。
 
 - **核心职责：** 基于 `task + packet_sequence + entities + topology` 输出可机读的“预言结果（预测版）”。
 - **输入 (Input)：**
@@ -409,16 +409,16 @@
 2. **规则推演：** 智能体四充当 Semantic-HGRG，提取包头物理特征构建精准 Match Keys，并依据意图推演 Action 复杂参数，生成 Entities JSON。
 3. **合规质检：** 规则流转至**智能体五（审查员）**。若发现匹配键类型或动作参数产生幻觉，则打回重构；直至输出 `PASS`。
 
-#### 阶段四：预言结果生成与真实执行对照 (Oracle Prediction & Runtime Comparison)
+#### 阶段四：预言结果生成 (Oracle Prediction)
 
 1. **预言生成（Agent6）：** 在每个 scenario 上调用智能体六，输出逐包 `deliver/drop/unknown` 的预测结果（含可选 `expected_rx_host`）。
-2. **物理执行取真值：** 调度器调用执行引擎（如 P4CE）运行同一组输入报文与控制面实体，收集真实观测结果（是否被接收、接收方是谁）。
-3. **自动比对：** 调度器将“`Agent6 预测`”与“`Runtime 观测`”做逐包比较，产出 mismatch 列表与整体状态（`MATCH` / `MISMATCH` / `PENDING_RUNTIME`）。
+2. **结果落库：** 调度器将预测结果写入 testcase 的结构化字段（可机读），作为后续真实环境执行时的比对基线。
+3. **阶段边界：** 本阶段不负责真实运行采样；真实观测由外部执行链路在后续阶段完成。
 
 #### 阶段五：终极封包与基准落盘 (Testcase Packaging & Persistence)
 
 1. **时序绑定：** 主控调度器调用 **`merge_testcase_scenario()`** 工具。
-2. **封包落盘：** 将输入报文 $x$、控制面实体规则 $c$、Agent6 预测 $\hat{y}_{agent}$、运行时真值 $y_{runtime}$ 与比对结果强绑定，打包成标准测试用例文件（如 `.stf` 或 Scenario JSON）。
+2. **封包落盘：** 将输入报文 $x$、控制面实体规则 $c$ 与 Agent6 预测 $\hat{y}_{agent}$ 强绑定，打包成标准测试用例文件（如 `.stf` 或 Scenario JSON）。
 3. **任务终结：** 向 Java 端返回“生成成功”信号，产物可直接用于后续变异与回归分析。
 
 

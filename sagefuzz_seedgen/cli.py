@@ -32,15 +32,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--max-retries", type=int, default=4)
     ap.add_argument("--out", type=_path, default=None)
     ap.add_argument("--session-state", type=_path, default=Path("runs/session_state.json"))
-    ap.add_argument(
-        "--runtime-observations",
-        type=_path,
-        default=None,
-        help=(
-            "Optional runtime observation JSON used to compare with Agent6 oracle prediction. "
-            "If omitted, workflow marks oracle comparison as PENDING_RUNTIME."
-        ),
-    )
 
     ap.add_argument("--model-id", type=str, default=None)
     ap.add_argument("--api-key", type=str, default=None)
@@ -142,11 +133,6 @@ def main(argv: Optional[list[str]] = None) -> int:
         max_retries=int(run_section.get("max_retries")) if run_section.get("max_retries") else args.max_retries,
         out_path=args.out,
         session_state_path=args.session_state,
-        runtime_observations_path=(
-            args.runtime_observations
-            if args.runtime_observations is not None
-            else (_path(run_section.get("runtime_observations")) if run_section.get("runtime_observations") else None)
-        ),
     )
 
     # Import lazily so `--help` works without model/provider deps.
