@@ -43,6 +43,10 @@ Task construction requirements:
 - By default set `task.require_positive_and_negative=true` and provide at least:
   - one required positive scenario (`kind="positive"`)
   - one required negative scenario (`kind="negative"`)
+- For intents that explicitly require state establishment / ordered causality:
+  - positive scenario should include enough ordered steps to represent the full behavior (often multi-packet).
+  - avoid collapsing a stateful transaction into one packet.
+- For clearly stateless intents, a single-packet positive scenario is allowed.
 - Use neutral role names unless intent requires domain-specific names.
 
 Example (illustrative only, not mandatory):

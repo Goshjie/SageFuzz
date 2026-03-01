@@ -319,9 +319,11 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
     # --- Step 2: Semantic analyzer produces a task spec, or asks model-driven follow-up questions ---
     max_intent_rounds = 3
     task: TaskSpec | None = None
+    agent1_feedback: Optional[str] = None
     for _round in range(1, max_intent_rounds + 1):
         a1_in = {
             "user_intent": intent_payload or None,
+            "previous_feedback": agent1_feedback,
             "note": "If user_intent is missing required fields, return questions instead of guessing.",
         }
         a1_in_str = (
@@ -349,6 +351,53 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         )
 
         if a1_out.kind == "task" and a1_out.task is not None:
+            # Agent-based semantic completeness check for TaskSpec before Agent2 generation.
+            task_review_in = {
+                "mode": "task_contract_review",
+                "task": a1_out.task.model_dump(),
+                "user_intent": intent_payload or None,
+                "review_hint": (
+                    "Check whether sequence_contract semantically matches user intent. "
+                    "For stateful/directional intents, positive scenario should be a full ordered transaction "
+                    "(not collapsed to one packet)."
+                ),
+            }
+            task_review_in_str = (
+                "Review TaskSpec semantic completeness and return CriticResult STRICT JSON:\n\n"
+                + json.dumps(task_review_in, indent=2)
+            )
+            try:
+                task_review_raw = agent3.run(
+                    task_review_in_str,
+                    output_schema=CriticResult,
+                    session_state=session_state,
+                ).content
+            except Exception as e:
+                # Avoid blocking generation on review API failures.
+                recorder.record(
+                    agent_role="agent3_constraint_critic",
+                    step="task_contract_review",
+                    round_id=_round,
+                    model_input=task_review_in,
+                    model_output={"error": "agent_run_exception", "message": _error_text(e)},
+                )
+                task = a1_out.task
+                break
+
+            task_review = _coerce_schema_output(task_review_raw, CriticResult)
+            recorder.record(
+                agent_role="agent3_constraint_critic",
+                step="task_contract_review",
+                round_id=_round,
+                model_input=task_review_in,
+                model_output=_to_recordable(task_review) if task_review is not None else {"error": "schema_parse_failed"},
+                extra={"raw_output": _to_recordable(task_review_raw)},
+            )
+            if task_review is not None and task_review.status == "FAIL":
+                print(f"\n[WARN] Agent3 认为 TaskSpec 语义不完整：{task_review.feedback}")
+                agent1_feedback = task_review.feedback
+                continue
+
             task = a1_out.task
             break
 
