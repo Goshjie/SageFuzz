@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import urlparse
 from typing import List, Tuple
 
 from agno.agent import Agent
 from agno.models.openai.like import OpenAILike
+from agno.models.xai import xAI
 from agno.team import Team
 
 from sagefuzz_seedgen.agents.prompts_loader import load_prompt
@@ -40,6 +42,18 @@ def _build_model(model: ModelConfig) -> OpenAILike:
         raise ValueError(
             "Missing AGNO_API_KEY (or --api-key). This generator needs a model key to run the agents."
         )
+    base_host = urlparse(model.base_url).netloc.lower()
+
+    # Prefer Agno native xAI model when talking to xAI endpoints.
+    if base_host.endswith("x.ai") or base_host.endswith("api.x.ai"):
+        return xAI(
+            id=model.model_id,
+            api_key=model.api_key,
+            base_url=model.base_url,
+            timeout=float(model.timeout_seconds),
+            max_retries=int(model.max_retries),
+        )
+
     return OpenAILike(
         id=model.model_id,
         api_key=model.api_key,

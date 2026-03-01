@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 
 from sagefuzz_seedgen.runtime.initializer import initialize_program_context
-from sagefuzz_seedgen.schemas import PacketSpec, TableRule, TaskSpec
+from sagefuzz_seedgen.schemas import PacketSpec, TaskSpec, TableRule
 from sagefuzz_seedgen.workflow.validation import validate_control_plane_entities
 
 
@@ -21,10 +21,8 @@ class TestEntityValidation(unittest.TestCase):
             task_id="T",
             task_description="",
             feature_under_test="firewall",
-            internal_host="h1",
-            external_host="h3",
-            require_positive_handshake=True,
-            include_negative_external_initiation=True,
+            role_bindings={"initiator": "h1", "responder": "h3"},
+            sequence_contract=[],
         )
 
     def _packets(self) -> list[PacketSpec]:
@@ -107,6 +105,67 @@ class TestEntityValidation(unittest.TestCase):
         )
         self.assertEqual(res.status, "FAIL")
         self.assertIn("destination IP", res.feedback)
+
+    def test_mismatched_match_type_fails(self) -> None:
+        entities = [
+            TableRule(
+                table_name="MyIngress.ipv4_lpm",
+                match_type="exact",
+                match_keys={"hdr.ipv4.dstAddr": ["10.0.3.3", 32]},
+                action_name="MyIngress.ipv4_forward",
+                action_data={"dstAddr": "08:00:00:00:03:33", "port": 3},
+            )
+        ]
+        res = validate_control_plane_entities(
+            ctx=self.ctx,
+            task=self._task(),
+            packet_sequence=self._packets(),
+            entities=entities,
+        )
+        self.assertEqual(res.status, "FAIL")
+        self.assertIn("match_type", res.feedback)
+
+    def test_ternary_table_requires_priority(self) -> None:
+        # Inject a synthetic ternary table to verify priority checks.
+        self.ctx.tables_by_name["Synthetic.ternary"] = {
+            "actions": ["MyIngress.ipv4_forward"],
+            "key": [{"target": ["ipv4", "dstAddr"], "match_type": "ternary"}],
+        }
+        packets = [
+            PacketSpec(
+                packet_id=1,
+                tx_host="h1",
+                scenario="positive_handshake",
+                protocol_stack=["Ethernet", "IPv4", "TCP"],
+                fields={"IPv4.src": "10.0.1.1", "IPv4.dst": "10.0.3.3", "TCP.flags": "S"},
+            ),
+        ]
+        entities = [
+            TableRule(
+                table_name="Synthetic.ternary",
+                match_type="ternary",
+                match_keys={"hdr.ipv4.dstAddr": {"value": "10.0.3.3", "mask": "255.255.255.255"}},
+                action_name="MyIngress.ipv4_forward",
+                action_data={"dstAddr": "08:00:00:00:03:33", "port": 3},
+            )
+        ]
+        res = validate_control_plane_entities(
+            ctx=self.ctx,
+            task=self._task(),
+            packet_sequence=packets,
+            entities=entities,
+        )
+        self.assertEqual(res.status, "FAIL")
+        self.assertIn("requires priority", res.feedback)
+
+        entities[0].priority = 10
+        res = validate_control_plane_entities(
+            ctx=self.ctx,
+            task=self._task(),
+            packet_sequence=packets,
+            entities=entities,
+        )
+        self.assertEqual(res.status, "PASS", res.feedback)
 
 
 if __name__ == "__main__":

@@ -1,154 +1,329 @@
 from __future__ import annotations
 
 from ipaddress import ip_interface
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set
 
 from sagefuzz_seedgen.runtime.program_context import ProgramContext
-from sagefuzz_seedgen.schemas import CriticResult, PacketSpec, TableRule, TaskSpec
+from sagefuzz_seedgen.schemas import (
+    CriticResult,
+    PacketSpec,
+    SequenceScenarioSpec,
+    TableRule,
+    TaskSpec,
+)
 
 
-def _get_flag(flags: object) -> str:
-    if isinstance(flags, str):
-        return flags
-    return ""
-
-
-def _field_int(fields: dict, key: str) -> Optional[int]:
-    v = fields.get(key)
-    if isinstance(v, bool):
-        return int(v)
-    if isinstance(v, int):
-        return v
-    if isinstance(v, str):
-        # allow hex
-        s = v.strip().lower()
+def _to_number(value: Any) -> Optional[float]:
+    if isinstance(value, bool):
+        return float(int(value))
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        raw = value.strip().lower()
+        if not raw:
+            return None
         try:
-            if s.startswith("0x"):
-                return int(s, 16)
-            return int(s, 10)
+            if raw.startswith("0x"):
+                return float(int(raw, 16))
+            return float(raw)
         except Exception:
             return None
     return None
 
 
-def _field_str(fields: dict, key: str) -> Optional[str]:
-    v = fields.get(key)
-    return v if isinstance(v, str) else None
+def _coerce_literal(value: Any) -> Any:
+    if isinstance(value, str):
+        normalized = value.strip()
+        if normalized == "":
+            return normalized
+        numeric = _to_number(normalized)
+        if numeric is not None:
+            # Preserve integer semantics when possible.
+            return int(numeric) if numeric.is_integer() else numeric
+        return normalized
+    return value
 
 
-def _find_handshake_triplet(packets: List[PacketSpec]) -> Optional[Tuple[PacketSpec, PacketSpec, PacketSpec]]:
-    # Heuristic: find SYN, then SYN-ACK, then ACK.
-    syn = None
-    synack = None
-    ack = None
-    for p in packets:
-        flags = _get_flag(p.fields.get("TCP.flags"))
-        if syn is None and "S" in flags and "A" not in flags:
-            syn = p
-            continue
-        if syn is not None and synack is None and "S" in flags and "A" in flags:
-            synack = p
-            continue
-        if syn is not None and synack is not None and ack is None and "A" in flags and "S" not in flags:
-            ack = p
-            break
-    if syn and synack and ack:
-        return syn, synack, ack
+def _expectation_matches(actual: Any, expected: Any) -> bool:
+    if isinstance(expected, dict):
+        if "equals" in expected and not _expectation_matches(actual, expected["equals"]):
+            return False
+        if "eq" in expected and not _expectation_matches(actual, expected["eq"]):
+            return False
+
+        if "contains" in expected:
+            needle = expected["contains"]
+            if isinstance(needle, str):
+                if not isinstance(actual, str) or needle not in actual:
+                    return False
+            elif isinstance(needle, list):
+                if not isinstance(actual, str):
+                    return False
+                for item in needle:
+                    if not isinstance(item, str) or item not in actual:
+                        return False
+            else:
+                return False
+        if "not_contains" in expected:
+            needle = expected["not_contains"]
+            if isinstance(needle, str):
+                if not isinstance(actual, str) or needle in actual:
+                    return False
+            elif isinstance(needle, list):
+                if not isinstance(actual, str):
+                    return False
+                for item in needle:
+                    if not isinstance(item, str):
+                        return False
+                    if item in actual:
+                        return False
+            else:
+                return False
+        if "one_of" in expected:
+            candidates = expected["one_of"]
+            if not isinstance(candidates, list):
+                return False
+            actual_normalized = _coerce_literal(actual)
+            normalized_candidates = [_coerce_literal(item) for item in candidates]
+            if actual_normalized not in normalized_candidates:
+                return False
+        return True
+
+    left = _coerce_literal(actual)
+    right = _coerce_literal(expected)
+    return left == right
+
+
+def _scenario_packets(packet_sequence: List[PacketSpec], scenario: str) -> List[PacketSpec]:
+    out: List[PacketSpec] = []
+    for packet in packet_sequence:
+        packet_scenario = packet.scenario or "default"
+        if packet_scenario == scenario:
+            out.append(packet)
+    return out
+
+
+def _compare_numeric(left: float, right: float, op: str) -> bool:
+    if op == "eq":
+        return left == right
+    if op == "neq":
+        return left != right
+    if op == "gt":
+        return left > right
+    if op == "lt":
+        return left < right
+    if op == "ge":
+        return left >= right
+    if op == "le":
+        return left <= right
+    return False
+
+
+def _validate_scenario_contract(
+    *,
+    ctx: ProgramContext,
+    role_bindings: Dict[str, str],
+    packet_sequence: List[PacketSpec],
+    contract: SequenceScenarioSpec,
+) -> Optional[CriticResult]:
+    scenario_packets = _scenario_packets(packet_sequence, contract.scenario)
+    if not scenario_packets and contract.required:
+        return CriticResult(status="FAIL", feedback=f"Missing required scenario '{contract.scenario}'.")
+    if not scenario_packets:
+        return None
+
+    if len(scenario_packets) < len(contract.steps):
+        return CriticResult(
+            status="FAIL",
+            feedback=(
+                f"Scenario '{contract.scenario}' has {len(scenario_packets)} packet(s), "
+                f"but contract requires at least {len(contract.steps)} step(s)."
+            ),
+        )
+    if not contract.allow_additional_packets and len(scenario_packets) != len(contract.steps):
+        return CriticResult(
+            status="FAIL",
+            feedback=(
+                f"Scenario '{contract.scenario}' must have exactly {len(contract.steps)} packet(s); "
+                f"got {len(scenario_packets)}."
+            ),
+        )
+
+    for idx, step in enumerate(contract.steps, 1):
+        packet = scenario_packets[idx - 1]
+        expected_tx_host = role_bindings.get(step.tx_role)
+        if expected_tx_host is None:
+            return CriticResult(
+                status="FAIL",
+                feedback=f"Scenario '{contract.scenario}' step {idx}: unknown tx_role '{step.tx_role}'.",
+            )
+        if packet.tx_host != expected_tx_host:
+            return CriticResult(
+                status="FAIL",
+                feedback=(
+                    f"Scenario '{contract.scenario}' step {idx}: tx_host must be "
+                    f"'{expected_tx_host}' for role '{step.tx_role}', got '{packet.tx_host}'."
+                ),
+            )
+
+        if step.protocol_stack and packet.protocol_stack != step.protocol_stack:
+            return CriticResult(
+                status="FAIL",
+                feedback=(
+                    f"Scenario '{contract.scenario}' step {idx}: protocol_stack mismatch; "
+                    f"expected {step.protocol_stack}, got {packet.protocol_stack}."
+                ),
+            )
+
+        if step.rx_role:
+            expected_rx_host = role_bindings.get(step.rx_role)
+            if expected_rx_host is None:
+                return CriticResult(
+                    status="FAIL",
+                    feedback=f"Scenario '{contract.scenario}' step {idx}: unknown rx_role '{step.rx_role}'.",
+                )
+            host_info = ctx.host_info.get(expected_rx_host, {})
+            expected_ip = _normalize_ipv4(host_info.get("ip"))
+            packet_dst_ip = _normalize_ipv4(packet.fields.get("IPv4.dst"))
+            if expected_ip and packet_dst_ip and packet_dst_ip != expected_ip:
+                return CriticResult(
+                    status="FAIL",
+                    feedback=(
+                        f"Scenario '{contract.scenario}' step {idx}: IPv4.dst must target role "
+                        f"'{step.rx_role}' host '{expected_rx_host}' ({expected_ip}); got '{packet_dst_ip}'."
+                    ),
+                )
+            expected_mac = host_info.get("mac")
+            packet_dst_mac = packet.fields.get("Ethernet.dst")
+            if isinstance(expected_mac, str) and isinstance(packet_dst_mac, str):
+                if packet_dst_mac.lower() != expected_mac.lower():
+                    return CriticResult(
+                        status="FAIL",
+                        feedback=(
+                            f"Scenario '{contract.scenario}' step {idx}: Ethernet.dst must target role "
+                            f"'{step.rx_role}' host '{expected_rx_host}' ({expected_mac}); got '{packet_dst_mac}'."
+                        ),
+                    )
+
+        for field, expected in step.field_expectations.items():
+            actual = packet.fields.get(field)
+            if not _expectation_matches(actual, expected):
+                return CriticResult(
+                    status="FAIL",
+                    feedback=(
+                        f"Scenario '{contract.scenario}' step {idx}: field '{field}' violates expectation; "
+                        f"actual={actual!r}, expected={expected!r}."
+                    ),
+                )
+
+    for relation in contract.field_relations:
+        if relation.left_step > len(scenario_packets) or relation.right_step > len(scenario_packets):
+            return CriticResult(
+                status="FAIL",
+                feedback=(
+                    f"Scenario '{contract.scenario}' relation references out-of-range step "
+                    f"(left={relation.left_step}, right={relation.right_step})."
+                ),
+            )
+        left_packet = scenario_packets[relation.left_step - 1]
+        right_packet = scenario_packets[relation.right_step - 1]
+        left_value = _to_number(left_packet.fields.get(relation.left_field))
+        right_value = _to_number(right_packet.fields.get(relation.right_field))
+        if left_value is None or right_value is None:
+            return CriticResult(
+                status="FAIL",
+                feedback=(
+                    f"Scenario '{contract.scenario}' relation requires numeric fields "
+                    f"{relation.left_field}/{relation.right_field}."
+                ),
+            )
+        rhs = right_value + relation.right_delta
+        if not _compare_numeric(left_value, rhs, relation.op):
+            return CriticResult(
+                status="FAIL",
+                feedback=(
+                    f"Scenario '{contract.scenario}' relation failed: step {relation.left_step}.{relation.left_field} "
+                    f"({left_value}) {relation.op} step {relation.right_step}.{relation.right_field} "
+                    f"+ {relation.right_delta} ({rhs})."
+                ),
+            )
+
     return None
 
 
-def validate_directional_tcp_state_trigger(
+def validate_packet_sequence_contract(
     *,
     ctx: ProgramContext,
     task: TaskSpec,
     packet_sequence: List[PacketSpec],
 ) -> CriticResult:
-    """Deterministic validator for the current stage DoD.
-
-    We validate:
-    - topology binding: tx_host exists, internal initiates, external replies
-    - minimal time-ordered TCP state trigger (SYN -> SYN-ACK -> ACK)
-    - parser magic numbers for Ethernet/IPv4/TCP (best-effort)
-    """
+    """Deterministic validator for contract-driven packet sequences."""
 
     if not packet_sequence:
         return CriticResult(status="FAIL", feedback="packet_sequence is empty")
 
-    # Topology presence
-    for p in packet_sequence:
-        if p.tx_host not in ctx.host_info:
-            return CriticResult(status="FAIL", feedback=f"packet_id {p.packet_id}: tx_host '{p.tx_host}' not in topology hosts")
+    for packet in packet_sequence:
+        if packet.tx_host not in ctx.host_info:
+            return CriticResult(
+                status="FAIL",
+                feedback=f"packet_id {packet.packet_id}: tx_host '{packet.tx_host}' not in topology hosts.",
+            )
 
-    # Find positive handshake
-    trip = _find_handshake_triplet(packet_sequence)
-    if trip is None and task.require_positive_handshake:
-        return CriticResult(
-            status="FAIL",
-            feedback="Missing positive directional TCP handshake triplet (SYN -> SYN-ACK -> ACK).",
+    if not task.role_bindings:
+        return CriticResult(status="FAIL", feedback="task.role_bindings is empty.")
+    for role, host_id in task.role_bindings.items():
+        if host_id not in ctx.host_info:
+            return CriticResult(
+                status="FAIL",
+                feedback=f"task.role_bindings[{role!r}] references unknown host '{host_id}'.",
+            )
+
+    if not task.sequence_contract:
+        return CriticResult(status="FAIL", feedback="task.sequence_contract is empty.")
+
+    if task.require_positive_and_negative:
+        required_positive = [c for c in task.sequence_contract if c.required and c.kind == "positive"]
+        required_negative = [c for c in task.sequence_contract if c.required and c.kind == "negative"]
+        if not required_positive:
+            return CriticResult(
+                status="FAIL",
+                feedback=(
+                    "task.require_positive_and_negative=true, but sequence_contract has no required positive scenario."
+                ),
+            )
+        if not required_negative:
+            return CriticResult(
+                status="FAIL",
+                feedback=(
+                    "task.require_positive_and_negative=true, but sequence_contract has no required negative scenario."
+                ),
+            )
+
+    for contract in task.sequence_contract:
+        res = _validate_scenario_contract(
+            ctx=ctx,
+            role_bindings=task.role_bindings,
+            packet_sequence=packet_sequence,
+            contract=contract,
         )
+        if res is not None:
+            return res
 
-    if trip is not None:
-        syn, synack, ack = trip
-
-        # Directionality is intent-driven: use explicit host roles from TaskSpec (derived from user intent).
-        if syn.tx_host != task.internal_host:
+    if task.require_positive_and_negative:
+        packet_scenarios = {packet.scenario or "default" for packet in packet_sequence}
+        kind_by_scenario = {contract.scenario: contract.kind for contract in task.sequence_contract}
+        has_positive = any(kind_by_scenario.get(scenario) == "positive" for scenario in packet_scenarios)
+        has_negative = any(kind_by_scenario.get(scenario) == "negative" for scenario in packet_scenarios)
+        if not has_positive or not has_negative:
             return CriticResult(
                 status="FAIL",
-                feedback=f"Positive SYN must be sent by internal_host '{task.internal_host}'; got '{syn.tx_host}'.",
-            )
-        if synack.tx_host != task.external_host:
-            return CriticResult(
-                status="FAIL",
-                feedback=f"Positive SYN-ACK must be sent by external_host '{task.external_host}'; got '{synack.tx_host}'.",
-            )
-        if ack.tx_host != task.internal_host:
-            return CriticResult(
-                status="FAIL",
-                feedback=f"Positive ACK must be sent by internal_host '{task.internal_host}'; got '{ack.tx_host}'.",
+                feedback=(
+                    "packet_sequence must include both positive and negative scenarios when "
+                    "task.require_positive_and_negative=true."
+                ),
             )
 
-        syn_seq = _field_int(syn.fields, "TCP.seq")
-        synack_seq = _field_int(synack.fields, "TCP.seq")
-        synack_ack = _field_int(synack.fields, "TCP.ack")
-        ack_ack = _field_int(ack.fields, "TCP.ack")
-
-        if syn_seq is None or synack_seq is None or synack_ack is None or ack_ack is None:
-            return CriticResult(status="FAIL", feedback="Handshake packets must include TCP.seq and TCP.ack where applicable.")
-
-        if synack_ack != syn_seq + 1:
-            return CriticResult(status="FAIL", feedback="SYN-ACK TCP.ack must equal SYN TCP.seq + 1.")
-        if ack_ack != synack_seq + 1:
-            return CriticResult(status="FAIL", feedback="ACK TCP.ack must equal SYN-ACK TCP.seq + 1.")
-
-        # Best-effort magic numbers (do not overfit; just catch obvious omissions)
-        for pkt in (syn, synack, ack):
-            ether = _field_str(pkt.fields, "Ethernet.etherType")
-            if ether is None:
-                return CriticResult(status="FAIL", feedback=f"packet_id {pkt.packet_id}: missing Ethernet.etherType magic number (expected 0x0800 for IPv4)")
-            if ether.lower() != "0x0800":
-                return CriticResult(status="FAIL", feedback=f"packet_id {pkt.packet_id}: Ethernet.etherType must be 0x0800 for IPv4")
-
-            proto = _field_int(pkt.fields, "IPv4.proto")
-            if proto is None:
-                return CriticResult(status="FAIL", feedback=f"packet_id {pkt.packet_id}: missing IPv4.proto (expected 6 for TCP)")
-            if proto != 6:
-                return CriticResult(status="FAIL", feedback=f"packet_id {pkt.packet_id}: IPv4.proto must be 6 for TCP")
-
-    # Optional negative case: external initiation SYN
-    if task.include_negative_external_initiation:
-        for p in packet_sequence:
-            if p.scenario != "negative_external_initiation":
-                continue
-            flags = _get_flag(p.fields.get("TCP.flags"))
-            if "S" in flags and "A" not in flags:
-                if p.tx_host != task.external_host:
-                    return CriticResult(
-                        status="FAIL",
-                        feedback=f"negative_external_initiation SYN must be sent by external_host '{task.external_host}'.",
-                    )
-                break
-
-    return CriticResult(status="PASS", feedback="Directional TCP state trigger sequence is structurally valid.")
+    return CriticResult(status="PASS", feedback="packet_sequence satisfies task.sequence_contract.")
 
 
 def _normalize_ipv4(value: Any) -> Optional[str]:
@@ -211,6 +386,26 @@ def _normalize_table_key_field(key: Any) -> Optional[str]:
     return None
 
 
+def _normalize_match_type(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    return normalized or None
+
+
+def _collect_table_match_types(table_keys: Any) -> Set[str]:
+    out: Set[str] = set()
+    if not isinstance(table_keys, list):
+        return out
+    for item in table_keys:
+        if not isinstance(item, dict):
+            continue
+        match_type = _normalize_match_type(item.get("match_type"))
+        if match_type:
+            out.add(match_type)
+    return out
+
+
 def validate_control_plane_entities(
     *,
     ctx: ProgramContext,
@@ -239,6 +434,25 @@ def validate_control_plane_entities(
             )
 
         table_keys = table.get("key", [])
+        key_match_types = _collect_table_match_types(table_keys)
+        rule_match_type = _normalize_match_type(rule.match_type)
+        if key_match_types and rule_match_type not in key_match_types:
+            return CriticResult(
+                status="FAIL",
+                feedback=(
+                    f"entity[{idx}]: match_type '{rule.match_type}' is incompatible with table "
+                    f"'{rule.table_name}' key match type(s) {sorted(key_match_types)}."
+                ),
+            )
+
+        if key_match_types.intersection({"ternary", "range", "optional"}) and rule.priority is None:
+            return CriticResult(
+                status="FAIL",
+                feedback=(
+                    f"entity[{idx}]: table '{rule.table_name}' requires priority for ternary/range/optional matches."
+                ),
+            )
+
         if isinstance(table_keys, list):
             required_key_fields = {
                 field for field in (_normalize_table_key_field(item) for item in table_keys) if field is not None
@@ -275,7 +489,15 @@ def validate_control_plane_entities(
                 feedback=f"entities do not cover packet_sequence destination IP(s): {uncovered}.",
             )
 
-    if task.external_host not in ctx.host_info or task.internal_host not in ctx.host_info:
-        return CriticResult(status="FAIL", feedback="Task host roles are not present in topology.")
+    if not task.role_bindings:
+        return CriticResult(status="FAIL", feedback="task.role_bindings is empty.")
+    missing_role_hosts = sorted(
+        f"{role}:{host_id}" for role, host_id in task.role_bindings.items() if host_id not in ctx.host_info
+    )
+    if missing_role_hosts:
+        return CriticResult(
+            status="FAIL",
+            feedback=f"Task role binding host(s) are not present in topology: {missing_role_hosts}.",
+        )
 
     return CriticResult(status="PASS", feedback="Control-plane entities are structurally valid and aligned with packet_sequence.")

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional, Type, TypeVar
+from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar
 
 from pydantic import BaseModel
 
@@ -26,7 +28,7 @@ from sagefuzz_seedgen.tools.context_registry import set_program_context
 from sagefuzz_seedgen.topology.topology_loader import summarize_topology
 from sagefuzz_seedgen.workflow.validation import (
     validate_control_plane_entities,
-    validate_directional_tcp_state_trigger,
+    validate_packet_sequence_contract,
 )
 from sagefuzz_seedgen.workflow.recorder import AgentRecorder
 
@@ -117,6 +119,62 @@ def _prompt_with_default(question: str, default_value: Optional[str]) -> str:
     except EOFError:
         # Non-interactive mode: keep existing defaults when stdin is unavailable.
         return default_value or ""
+
+
+def _parse_role_bindings_answer(value: str) -> Optional[Dict[str, str]]:
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    out: Dict[str, str] = {}
+    for key, host in parsed.items():
+        if isinstance(key, str) and isinstance(host, str) and key.strip() and host.strip():
+            out[key.strip()] = host.strip()
+    return out or None
+
+
+def _scenario_name(raw: Optional[str]) -> str:
+    text = (raw or "").strip()
+    return text or "default"
+
+
+def _scenario_slug(name: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._-")
+    return slug or "default"
+
+
+def _group_packets_by_scenario(packet_sequence: List[Any]) -> Dict[str, List[Any]]:
+    out: Dict[str, List[Any]] = {}
+    for packet in packet_sequence:
+        scenario = _scenario_name(getattr(packet, "scenario", None))
+        out.setdefault(scenario, []).append(packet)
+    return out
+
+
+def _resolve_output_paths(run_id: str, out_path: Optional[Path]) -> Tuple[Path, Path]:
+    if out_path is None:
+        return (
+            Path("runs") / f"{run_id}_packet_sequence_index.json",
+            Path("runs") / f"{run_id}_testcases",
+        )
+    if out_path.suffix:
+        return (out_path, out_path.parent / f"{out_path.stem}_cases")
+    return (out_path / "index.json", out_path)
+
+
+def _split_case_records_by_kind(case_records: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    out = {"positive": [], "negative": [], "neutral": []}
+    for item in case_records:
+        kind = str(item.get("kind") or "neutral").lower()
+        if kind not in out:
+            kind = "neutral"
+        out[kind].append(item)
+    return out
 
 
 def _apply_fixed_intake_answers(
@@ -244,16 +302,16 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         print("\n[Agent1 needs more intent input]")
         if not qs:
             # Safety fallback if the model returned no structured questions.
-            print("1. 请补充本次测试的意图信息：要测试的功能点、意图/策略描述、拓扑/安全域划分、internal_host、external_host、是否包含外部主动发起的负例。")
+            print("1. 请补充本次测试的意图信息：要测试的功能点、策略描述、角色通信策略、拓扑/安全域划分。")
             qs = [
                 # Best-effort fields to collect:
                 # Note: we keep this minimal; Agent1 should normally provide structured questions.
                 {"field": "feature_under_test", "question_zh": "请输入 feature_under_test（要测试的功能点）:", "required": True},
                 {"field": "intent_text", "question_zh": "请输入 intent_text（意图/策略描述）:", "required": True},
-                {"field": "topology_zone_mapping", "question_zh": "请描述拓扑/安全域划分（例如：h1,h2 属于 internal；h3,h4 属于 external）:", "required": True},
-                {"field": "internal_host", "question_zh": "请输入 internal_host（例如 h1）:", "required": True},
-                {"field": "external_host", "question_zh": "请输入 external_host（例如 h3）:", "required": True},
-                {"field": "include_negative_external_initiation", "question_zh": "是否包含外部主动发起的负例？[y/N]:", "required": False},
+                {"field": "topology_zone_mapping", "question_zh": "请描述拓扑/安全域划分（例如：h1,h2 属于 trusted；h3,h4 属于 untrusted）:", "required": True},
+                {"field": "role_policy", "question_zh": "请描述通信角色策略（例如 initiator 允许发起，responder 仅回复）:", "required": True},
+                {"field": "preferred_role_bindings", "question_zh": "可选：请输入角色到主机的映射 JSON（例如 {\"initiator\":\"h2\",\"responder\":\"h3\"}）:", "required": False},
+                {"field": "include_negative_case", "question_zh": "是否包含负例场景？[y/N]:", "required": False},
             ]
 
         answers: Dict[str, Any] = {}
@@ -270,8 +328,11 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             ans = input(f"{i}. {qtext} ").strip()
             if ans == "":
                 continue
-            if field == "include_negative_external_initiation":
+            if field == "include_negative_case":
                 answers[field] = ans.lower() in ("y", "yes", "true", "1", "是", "对")
+            elif field == "preferred_role_bindings":
+                parsed_bindings = _parse_role_bindings_answer(ans)
+                answers[field] = parsed_bindings if parsed_bindings is not None else ans
             else:
                 answers[field] = ans
 
@@ -287,11 +348,17 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         user_intent = None
     user_intent_payload = user_intent.model_dump() if user_intent else (intent_payload or None)
 
-    # Ensure defaults are present for this program if agent returns empty/unknown.
-    if not task.internal_host:
-        task.internal_host = cfg.default_internal_host  # type: ignore[misc]
-    if not task.external_host:
-        task.external_host = cfg.default_external_host  # type: ignore[misc]
+    # Ensure role bindings are present if the model omitted them.
+    if not task.role_bindings:
+        task.role_bindings = {
+            "initiator": cfg.default_initiator_host,
+            "responder": cfg.default_responder_host,
+        }
+    if not task.sequence_contract:
+        raise RuntimeError("TaskSpec.sequence_contract is empty. Agent1 must define scenario contracts.")
+
+    generation_start_ts = _utc_ts()
+    generation_start_mono = time.perf_counter()
 
     last_feedback: Optional[str] = None
     last_attempt: Optional[AttemptResult] = None
@@ -390,7 +457,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         attempt_result = AttemptResult(task_id=task.task_id, packet_sequence=candidate.packet_sequence, critic=llm_critic)
 
         # Always run deterministic validator as the ground truth for this stage's DoD.
-        det = validate_directional_tcp_state_trigger(ctx=ctx, task=task, packet_sequence=attempt_result.packet_sequence)
+        det = validate_packet_sequence_contract(ctx=ctx, task=task, packet_sequence=attempt_result.packet_sequence)
         if det.status == "FAIL":
             attempt_result.critic = det
         recorder.record(
@@ -412,168 +479,271 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             f"No packet_sequence attempt succeeded after {cfg.max_retries} retries. Last feedback: {last_feedback}"
         )
 
-    # --- Step 4: Generate control-plane entities (rules) with critic loop ---
-    last_entity_feedback: Optional[str] = None
-    last_entities: Optional[RuleSetCandidate] = None
-    last_entity_critic: Optional[CriticResult] = None
-    entity_attempt_count = 0
-
-    for attempt in range(1, cfg.max_retries + 1):
-        entity_attempt_count = attempt
-        entity_gen_in = {
-            "attempt": attempt,
-            "task": task.model_dump(),
-            "user_intent": user_intent_payload,
-            "packet_sequence": [p.model_dump() for p in last_attempt.packet_sequence],
-            "previous_feedback": last_entity_feedback,
-        }
-        entity_gen_in_str = "Generate RuleSetCandidate STRICT JSON. Input:\n\n" + json.dumps(entity_gen_in, indent=2)
-        try:
-            entity_raw = agent4.run(
-                entity_gen_in_str,
-                output_schema=RuleSetCandidate,
-                session_state=session_state,
-            ).content
-        except Exception as e:
-            last_entity_feedback = f"Agent4 API error: {_error_text(e)}"
-            recorder.record(
-                agent_role="agent4_entity_generator",
-                step="entity_candidate",
-                round_id=attempt,
-                model_input=entity_gen_in,
-                model_output={"error": "agent_run_exception", "message": _error_text(e)},
-            )
-            continue
-        entity_candidate = _coerce_schema_output(entity_raw, RuleSetCandidate)
-        if entity_candidate is None:
-            last_entity_feedback = "Agent4 schema parse failed (possibly timeout/non-JSON output)."
-            recorder.record(
-                agent_role="agent4_entity_generator",
-                step="entity_candidate",
-                round_id=attempt,
-                model_input=entity_gen_in,
-                model_output={"error": "schema_parse_failed"},
-                extra={"raw_output": _to_recordable(entity_raw)},
-            )
-            continue
-        recorder.record(
-            agent_role="agent4_entity_generator",
-            step="entity_candidate",
-            round_id=attempt,
-            model_input=entity_gen_in,
-            model_output=entity_candidate.model_dump(),
-        )
-
-        entity_critic_in = {
-            "task": task.model_dump(),
-            "user_intent": user_intent_payload,
-            "packet_sequence": [p.model_dump() for p in last_attempt.packet_sequence],
-            "rule_set_candidate": entity_candidate.model_dump(),
-        }
-        entity_critic_in_str = (
-            "Evaluate control-plane entities and return CriticResult STRICT JSON:\n\n"
-            + json.dumps(entity_critic_in, indent=2)
-        )
-        try:
-            entity_critic_raw = agent5.run(
-                entity_critic_in_str,
-                output_schema=CriticResult,
-                session_state=session_state,
-            ).content
-        except Exception as e:
-            last_entity_feedback = f"Agent5 API error: {_error_text(e)}"
-            recorder.record(
-                agent_role="agent5_entity_critic",
-                step="entity_critic_result",
-                round_id=attempt,
-                model_input=entity_critic_in,
-                model_output={"error": "agent_run_exception", "message": _error_text(e)},
-            )
-            continue
-        llm_entity_critic = _coerce_schema_output(entity_critic_raw, CriticResult)
-        if llm_entity_critic is None:
-            last_entity_feedback = "Agent5 schema parse failed (possibly timeout/non-JSON output)."
-            recorder.record(
-                agent_role="agent5_entity_critic",
-                step="entity_critic_result",
-                round_id=attempt,
-                model_input=entity_critic_in,
-                model_output={"error": "schema_parse_failed"},
-                extra={"raw_output": _to_recordable(entity_critic_raw)},
-            )
-            continue
-        recorder.record(
-            agent_role="agent5_entity_critic",
-            step="entity_critic_result",
-            round_id=attempt,
-            model_input=entity_critic_in,
-            model_output=llm_entity_critic.model_dump(),
-        )
-
-        det_entity_critic = validate_control_plane_entities(
-            ctx=ctx,
-            task=task,
-            packet_sequence=last_attempt.packet_sequence,
-            entities=entity_candidate.entities,
-        )
-        recorder.record(
-            agent_role="deterministic_validator",
-            step="deterministic_entity_validation",
-            round_id=attempt,
-            model_input={
-                "task": task.model_dump(),
-                "packet_sequence": [p.model_dump() for p in last_attempt.packet_sequence],
-                "entities": [e.model_dump() for e in entity_candidate.entities],
-            },
-            model_output=det_entity_critic.model_dump(),
-        )
-
-        # For this stage, deterministic validation is the final gate.
-        final_entity_critic = det_entity_critic if det_entity_critic.status == "FAIL" else llm_entity_critic
-        last_entities = entity_candidate
-        last_entity_critic = final_entity_critic
-        last_entity_feedback = final_entity_critic.feedback
-
-        if final_entity_critic.status == "PASS":
-            break
-
-    if last_entities is None or last_entity_critic is None:
-        raise RuntimeError(
-            f"No entity generation attempt succeeded after {cfg.max_retries} retries. Last feedback: {last_entity_feedback}"
-        )
-
+    # --- Step 4: Generate control-plane entities per scenario ---
     topo = summarize_topology(ctx.topology)
     topo_summary = TopologySummary(hosts=topo["hosts"], links=topo["links"])
+    scenario_packets_map = _group_packets_by_scenario(last_attempt.packet_sequence)
 
-    final_status = "PASS" if (last_attempt.critic.status == "PASS" and last_entity_critic.status == "PASS") else "FAIL"
+    scenario_order: List[str] = []
+    scenario_meta: Dict[str, Dict[str, Any]] = {}
+    for contract in task.sequence_contract:
+        scenario = _scenario_name(contract.scenario)
+        if scenario not in scenario_meta:
+            scenario_order.append(scenario)
+            scenario_meta[scenario] = {"kind": contract.kind, "required": contract.required}
+    for scenario in scenario_packets_map.keys():
+        if scenario not in scenario_meta:
+            scenario_order.append(scenario)
+            scenario_meta[scenario] = {"kind": "neutral", "required": False}
+
+    scenario_outputs: Dict[str, TestcaseOutput] = {}
+    scenario_entity_status: Dict[str, str] = {}
+    scenario_entity_feedback: Dict[str, str] = {}
+    scenario_entity_attempts: Dict[str, int] = {}
+
+    for scenario in scenario_order:
+        packets_for_scenario = scenario_packets_map.get(scenario, [])
+        if not packets_for_scenario:
+            if bool(scenario_meta.get(scenario, {}).get("required")):
+                raise RuntimeError(f"Required scenario '{scenario}' has no packets in packet_sequence.")
+            continue
+
+        scenario_slug = _scenario_slug(scenario)
+        scenario_kind = str(scenario_meta.get(scenario, {}).get("kind") or "neutral")
+        last_entity_feedback: Optional[str] = None
+        last_entities: Optional[RuleSetCandidate] = None
+        last_entity_critic: Optional[CriticResult] = None
+        entity_attempt_count = 0
+
+        for attempt in range(1, cfg.max_retries + 1):
+            entity_attempt_count = attempt
+            entity_gen_in = {
+                "attempt": attempt,
+                "scenario": scenario,
+                "scenario_kind": scenario_kind,
+                "task": task.model_dump(),
+                "user_intent": user_intent_payload,
+                "packet_sequence": [p.model_dump() for p in packets_for_scenario],
+                "previous_feedback": last_entity_feedback,
+            }
+            entity_gen_in_str = "Generate RuleSetCandidate STRICT JSON. Input:\n\n" + json.dumps(entity_gen_in, indent=2)
+            try:
+                entity_raw = agent4.run(
+                    entity_gen_in_str,
+                    output_schema=RuleSetCandidate,
+                    session_state=session_state,
+                ).content
+            except Exception as e:
+                last_entity_feedback = f"Agent4 API error: {_error_text(e)}"
+                recorder.record(
+                    agent_role="agent4_entity_generator",
+                    step=f"entity_candidate_{scenario_slug}",
+                    round_id=attempt,
+                    model_input=entity_gen_in,
+                    model_output={"error": "agent_run_exception", "message": _error_text(e)},
+                )
+                continue
+            entity_candidate = _coerce_schema_output(entity_raw, RuleSetCandidate)
+            if entity_candidate is None:
+                last_entity_feedback = "Agent4 schema parse failed (possibly timeout/non-JSON output)."
+                recorder.record(
+                    agent_role="agent4_entity_generator",
+                    step=f"entity_candidate_{scenario_slug}",
+                    round_id=attempt,
+                    model_input=entity_gen_in,
+                    model_output={"error": "schema_parse_failed"},
+                    extra={"raw_output": _to_recordable(entity_raw)},
+                )
+                continue
+            recorder.record(
+                agent_role="agent4_entity_generator",
+                step=f"entity_candidate_{scenario_slug}",
+                round_id=attempt,
+                model_input=entity_gen_in,
+                model_output=entity_candidate.model_dump(),
+            )
+
+            entity_critic_in = {
+                "scenario": scenario,
+                "scenario_kind": scenario_kind,
+                "task": task.model_dump(),
+                "user_intent": user_intent_payload,
+                "packet_sequence": [p.model_dump() for p in packets_for_scenario],
+                "rule_set_candidate": entity_candidate.model_dump(),
+            }
+            entity_critic_in_str = (
+                "Evaluate control-plane entities and return CriticResult STRICT JSON:\n\n"
+                + json.dumps(entity_critic_in, indent=2)
+            )
+            try:
+                entity_critic_raw = agent5.run(
+                    entity_critic_in_str,
+                    output_schema=CriticResult,
+                    session_state=session_state,
+                ).content
+            except Exception as e:
+                last_entity_feedback = f"Agent5 API error: {_error_text(e)}"
+                recorder.record(
+                    agent_role="agent5_entity_critic",
+                    step=f"entity_critic_result_{scenario_slug}",
+                    round_id=attempt,
+                    model_input=entity_critic_in,
+                    model_output={"error": "agent_run_exception", "message": _error_text(e)},
+                )
+                continue
+            llm_entity_critic = _coerce_schema_output(entity_critic_raw, CriticResult)
+            if llm_entity_critic is None:
+                last_entity_feedback = "Agent5 schema parse failed (possibly timeout/non-JSON output)."
+                recorder.record(
+                    agent_role="agent5_entity_critic",
+                    step=f"entity_critic_result_{scenario_slug}",
+                    round_id=attempt,
+                    model_input=entity_critic_in,
+                    model_output={"error": "schema_parse_failed"},
+                    extra={"raw_output": _to_recordable(entity_critic_raw)},
+                )
+                continue
+            recorder.record(
+                agent_role="agent5_entity_critic",
+                step=f"entity_critic_result_{scenario_slug}",
+                round_id=attempt,
+                model_input=entity_critic_in,
+                model_output=llm_entity_critic.model_dump(),
+            )
+
+            det_entity_critic = validate_control_plane_entities(
+                ctx=ctx,
+                task=task,
+                packet_sequence=packets_for_scenario,
+                entities=entity_candidate.entities,
+            )
+            recorder.record(
+                agent_role="deterministic_validator",
+                step=f"deterministic_entity_validation_{scenario_slug}",
+                round_id=attempt,
+                model_input={
+                    "scenario": scenario,
+                    "task": task.model_dump(),
+                    "packet_sequence": [p.model_dump() for p in packets_for_scenario],
+                    "entities": [e.model_dump() for e in entity_candidate.entities],
+                },
+                model_output=det_entity_critic.model_dump(),
+            )
+
+            final_entity_critic = det_entity_critic if det_entity_critic.status == "FAIL" else llm_entity_critic
+            last_entities = entity_candidate
+            last_entity_critic = final_entity_critic
+            last_entity_feedback = final_entity_critic.feedback
+
+            if final_entity_critic.status == "PASS":
+                break
+
+        if last_entities is None or last_entity_critic is None:
+            raise RuntimeError(
+                f"No entity generation attempt succeeded for scenario '{scenario}' after {cfg.max_retries} retries. "
+                f"Last feedback: {last_entity_feedback}"
+            )
+
+        scenario_entity_status[scenario] = last_entity_critic.status
+        scenario_entity_feedback[scenario] = last_entity_critic.feedback
+        scenario_entity_attempts[scenario] = entity_attempt_count
+
+        scenario_outputs[scenario] = TestcaseOutput(
+            program=ctx.program_name or "unknown",
+            topology_ref=str(ctx.topology_path),
+            topology=topo_summary,
+            task_id=task.task_id,
+            packet_sequence=packets_for_scenario,
+            entities=last_entities.entities,
+            meta={
+                "generator": "sagefuzz_seedgen",
+                "timestamp_utc": _utc_ts(),
+                "scenario": scenario,
+                "scenario_kind": scenario_kind,
+                "packet_sequence_status": last_attempt.critic.status,
+                "packet_sequence_feedback": last_attempt.critic.feedback,
+                "entities_status": last_entity_critic.status,
+                "entities_feedback": last_entity_critic.feedback,
+                "attempts_packet_sequence": attempt_count,
+                "attempts_entities": entity_attempt_count,
+            },
+        )
+
+    index_path, cases_dir = _resolve_output_paths(run_id, cfg.out_path)
+    cases_dir.mkdir(parents=True, exist_ok=True)
+
+    case_files: Dict[str, str] = {}
+    for scenario in scenario_order:
+        scenario_output = scenario_outputs.get(scenario)
+        if scenario_output is None:
+            continue
+        case_path = cases_dir / f"{_scenario_slug(scenario)}.json"
+        _write_json_file(case_path, scenario_output.model_dump())
+        case_files[scenario] = str(case_path)
+
+    all_entities_pass = bool(scenario_entity_status) and all(s == "PASS" for s in scenario_entity_status.values())
+    final_status = "PASS" if (last_attempt.critic.status == "PASS" and all_entities_pass) else "FAIL"
     final_feedback = (
         f"packet_sequence: {last_attempt.critic.status} ({last_attempt.critic.feedback}); "
-        f"entities: {last_entity_critic.status} ({last_entity_critic.feedback})"
+        f"scenario_entities: {scenario_entity_status}"
     )
 
-    output = TestcaseOutput(
-        program=ctx.program_name or "unknown",
-        topology_ref=str(ctx.topology_path),
-        topology=topo_summary,
-        task_id=task.task_id,
-        packet_sequence=last_attempt.packet_sequence,
-        entities=last_entities.entities,
-        meta={
-            "generator": "sagefuzz_seedgen",
-            "timestamp_utc": _utc_ts(),
-            "attempts_packet_sequence": attempt_count,
-            "attempts_entities": entity_attempt_count,
-            "packet_sequence_status": last_attempt.critic.status,
-            "packet_sequence_feedback": last_attempt.critic.feedback,
-            "entities_status": last_entity_critic.status,
-            "entities_feedback": last_entity_critic.feedback,
+    generation_elapsed_seconds = max(0.0, time.perf_counter() - generation_start_mono)
+    generation_end_ts = _utc_ts()
+
+    case_records: List[Dict[str, Any]] = []
+    for scenario in scenario_order:
+        if scenario not in case_files:
+            continue
+        scenario_output = scenario_outputs.get(scenario)
+        scenario_kind = str(scenario_meta.get(scenario, {}).get("kind") or "neutral")
+        case_records.append(
+            {
+                "scenario": scenario,
+                "scenario_slug": _scenario_slug(scenario),
+                "kind": scenario_kind,
+                "required": bool(scenario_meta.get(scenario, {}).get("required")),
+                "case_file": case_files[scenario],
+                "packet_count": len(scenario_output.packet_sequence) if scenario_output else 0,
+                "entity_count": len(scenario_output.entities) if scenario_output else 0,
+                "entities_status": scenario_entity_status.get(scenario),
+                "entities_feedback": scenario_entity_feedback.get(scenario),
+                "attempts_entities": scenario_entity_attempts.get(scenario, 0),
+            }
+        )
+    cases_by_kind = _split_case_records_by_kind(case_records)
+
+    index_payload = {
+        "schema_version": "2.0",
+        "run_id": run_id,
+        "summary": {
+            "program": ctx.program_name or "unknown",
+            "topology_ref": str(ctx.topology_path),
+            "task_id": task.task_id,
             "final_status": final_status,
             "final_feedback": final_feedback,
+            "packet_sequence_status": last_attempt.critic.status,
+            "packet_sequence_feedback": last_attempt.critic.feedback,
+            "attempts_packet_sequence": attempt_count,
+            "total_cases": len(case_records),
+            "positive_cases": len(cases_by_kind["positive"]),
+            "negative_cases": len(cases_by_kind["negative"]),
+            "neutral_cases": len(cases_by_kind["neutral"]),
+            "passed_case_count": sum(1 for c in case_records if c.get("entities_status") == "PASS"),
+            "failed_case_count": sum(1 for c in case_records if c.get("entities_status") == "FAIL"),
         },
-    )
-
-    out_path = cfg.out_path or Path("runs") / f"{_utc_ts()}_packet_sequence.json"
-    _write_json_file(out_path, output.model_dump())
+        "timing": {
+            "intent_to_testcase_seconds": generation_elapsed_seconds,
+            "generation_start_utc": generation_start_ts,
+            "generation_end_utc": generation_end_ts,
+        },
+        "artifacts": {
+            "cases_dir": str(cases_dir),
+            "cases": case_records,
+            "cases_by_kind": cases_by_kind,
+        },
+    }
+    _write_json_file(index_path, index_payload)
     _write_json_file(session_state_path, session_state)
 
-    return out_path
+    return index_path

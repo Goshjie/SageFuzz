@@ -1,7 +1,10 @@
 import unittest
 import json
 
-from sagefuzz_seedgen.runtime.agno_patches import _repair_tool_arguments
+from sagefuzz_seedgen.runtime.agno_patches import (
+    _repair_tool_arguments,
+    _resolve_tool_name,
+)
 
 
 class _DummyFunction:
@@ -90,6 +93,27 @@ class TestAgnoArgumentPatch(unittest.TestCase):
             },
         )
         self.assertEqual(json.loads(out), {"port": 3})
+
+    def test_resolve_tool_name_from_camel_case_alias(self) -> None:
+        resolved = _resolve_tool_name(
+            name="get_hostInfo",
+            functions={"get_host_info": _DummyFunction({"type": "object", "properties": {}, "required": []})},
+        )
+        self.assertEqual(resolved, "get_host_info")
+
+    def test_resolve_tool_name_by_relaxed_lookup(self) -> None:
+        resolved = _resolve_tool_name(
+            name="getTopologyHosts",
+            functions={"get_topology_hosts": _DummyFunction({"type": "object", "properties": {}, "required": []})},
+        )
+        self.assertEqual(resolved, "get_topology_hosts")
+
+    def test_resolve_tool_name_keeps_unknown_name(self) -> None:
+        resolved = _resolve_tool_name(
+            name="non_existing_tool",
+            functions={"get_topology_hosts": _DummyFunction({"type": "object", "properties": {}, "required": []})},
+        )
+        self.assertEqual(resolved, "non_existing_tool")
 
 
 if __name__ == "__main__":

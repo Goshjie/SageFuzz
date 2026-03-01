@@ -63,6 +63,6 @@ class RunConfig:
     out_path: Optional[Path] = None
     session_state_path: Optional[Path] = None
 
-    # Topology defaults (can be inferred from topology.json; keep overrides for experiments)
-    default_internal_host: str = "h1"
-    default_external_host: str = "h3"
+    # Topology defaults used for fallback role binding when the model omits role_bindings.
+    default_initiator_host: str = "h1"
+    default_responder_host: str = "h3"

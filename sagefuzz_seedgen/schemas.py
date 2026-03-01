@@ -22,10 +22,19 @@ class UserIntent(BaseModel):
             "(internal/external/DMZ) and who is allowed to initiate vs. only reply."
         ),
     )
-    internal_host: Optional[str] = Field(None, description="Host id that can initiate (client).")
-    external_host: Optional[str] = Field(None, description="Host id that can only reply (server side).")
-    include_negative_external_initiation: Optional[bool] = Field(
-        None, description="Whether to add a negative case where external initiates."
+    role_policy: Optional[str] = Field(
+        None,
+        description=(
+            "Natural-language policy for communication roles, e.g. initiator/responder constraints "
+            "or directionality expectations."
+        ),
+    )
+    preferred_role_bindings: Optional[Dict[str, str]] = Field(
+        None,
+        description="Optional role->host preference map, e.g. {'initiator':'h2','responder':'h3'}.",
+    )
+    include_negative_case: Optional[bool] = Field(
+        None, description="Whether to include one negative scenario in generated packet sequence."
     )
 
 
@@ -36,9 +45,9 @@ class UserQuestion(BaseModel):
         "feature_under_test",
         "intent_text",
         "topology_zone_mapping",
-        "internal_host",
-        "external_host",
-        "include_negative_external_initiation",
+        "role_policy",
+        "preferred_role_bindings",
+        "include_negative_case",
     ]
     question_zh: str = Field(..., description="Question to the user in Simplified Chinese.")
     required: bool = True
@@ -56,14 +65,69 @@ class TaskSpec(BaseModel):
     task_id: str = Field(..., description="Stable id for this task.")
     task_description: str = Field(..., description="Human readable intent.")
     feature_under_test: str = Field(..., description="What functionality to test (carried from user intent).")
-    internal_host: str = Field(..., description="Host id that can initiate (client).")
-    external_host: str = Field(..., description="Host id that can only reply (server side).")
-    require_positive_handshake: bool = Field(
-        True, description="Require internal->external initiation with time-ordered replies."
+    role_bindings: Dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Concrete role-to-host binding used for packet generation/validation, "
+            "e.g. {'initiator':'h2','responder':'h3'}."
+        ),
     )
-    include_negative_external_initiation: bool = Field(
+    sequence_contract: List["SequenceScenarioSpec"] = Field(
+        default_factory=list,
+        description="Scenario contracts that define required packet steps and field relations.",
+    )
+    require_positive_and_negative: bool = Field(
         True,
-        description="If true, include an external->internal SYN as a negative-direction testcase packet.",
+        description="If true, sequence_contract must include and generate both required positive and negative scenarios.",
+    )
+
+
+class PacketStepSpec(BaseModel):
+    tx_role: str = Field(..., description="Sender role for this step, must exist in task.role_bindings.")
+    rx_role: Optional[str] = Field(
+        None, description="Optional receiver role for this step, used for dst host/IP/MAC consistency checks."
+    )
+    protocol_stack: List[str] = Field(
+        default_factory=list,
+        description='Expected protocol stack for this step, e.g. ["Ethernet","IPv4","TCP"].',
+    )
+    field_expectations: Dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Expected packet fields. Value can be a literal (exact match) or an expectation object "
+            "with keys such as equals/contains/not_contains/one_of."
+        ),
+    )
+
+
+class FieldRelationSpec(BaseModel):
+    left_step: int = Field(..., ge=1, description="1-based index into scenario steps.")
+    left_field: str = Field(..., description="Field key on the left side, e.g. TCP.ack.")
+    op: Literal["eq", "neq", "gt", "lt", "ge", "le"] = Field("eq")
+    right_step: int = Field(..., ge=1, description="1-based index into scenario steps.")
+    right_field: str = Field(..., description="Field key on the right side, e.g. TCP.seq.")
+    right_delta: float = Field(
+        0, description="Numeric delta added to right value before comparison, e.g. +1 for ack/seq continuity."
+    )
+
+
+class SequenceScenarioSpec(BaseModel):
+    scenario: str = Field(..., description="Scenario tag in packet_sequence, e.g. positive_main / negative_case_1.")
+    kind: Literal["positive", "negative", "neutral"] = Field(
+        "neutral",
+        description="Scenario kind used for high-level coverage checks.",
+    )
+    required: bool = Field(True, description="Whether this scenario must appear in packet_sequence.")
+    steps: List[PacketStepSpec] = Field(
+        default_factory=list,
+        description="Ordered packet-step expectations for this scenario.",
+    )
+    field_relations: List[FieldRelationSpec] = Field(
+        default_factory=list,
+        description="Cross-step numeric field relations inside this scenario.",
+    )
+    allow_additional_packets: bool = Field(
+        True, description="If false, packet count in this scenario must equal len(steps)."
     )
 
 

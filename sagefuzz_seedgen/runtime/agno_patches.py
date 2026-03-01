@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Dict, List, Optional
 
 from json_repair import repair_json
@@ -15,6 +16,64 @@ TOOL_ARGUMENT_ALIASES: Dict[str, Dict[str, str]] = {
     "get_ranked_tables": {"graph": "graph_name"},
     "get_jump_dict": {"graph": "graph_name"},
 }
+
+# Some providers occasionally drift to camelCase tool names.
+TOOL_NAME_ALIASES: Dict[str, str] = {
+    "get_hostInfo": "get_host_info",
+    "classify_hostZone": "classify_host_zone",
+    "get_topologyHosts": "get_topology_hosts",
+    "get_topologyLinks": "get_topology_links",
+    "choose_defaultHost_pair": "choose_default_host_pair",
+    "get_actionCode": "get_action_code",
+    "get_parserPaths": "get_parser_paths",
+    "get_parserTransitions": "get_parser_transitions",
+    "get_headerDefinitions": "get_header_definitions",
+    "get_headerBits": "get_header_bits",
+    "get_rankedTables": "get_ranked_tables",
+    "get_jumpDict": "get_jump_dict",
+    "get_pathConstraints": "get_path_constraints",
+}
+
+
+def _to_lookup_key(name: str) -> str:
+    return "".join(ch for ch in name.lower() if ch.isalnum())
+
+
+def _camel_to_snake(name: str) -> str:
+    # Convert common camelCase/PascalCase drift into snake_case.
+    step1 = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
+    return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", step1).lower()
+
+
+def _resolve_tool_name(name: str, functions: Optional[Dict[str, Any]]) -> str:
+    if not isinstance(name, str) or not name.strip():
+        return name
+
+    if not isinstance(functions, dict) or not functions:
+        return name
+
+    if name in functions:
+        return name
+
+    alias_target = TOOL_NAME_ALIASES.get(name)
+    if isinstance(alias_target, str) and alias_target in functions:
+        return alias_target
+
+    snake_name = _camel_to_snake(name)
+    if snake_name in functions:
+        return snake_name
+
+    # Post-validate against available tool names with a relaxed normalized key.
+    lookup = _to_lookup_key(name)
+    matches = [
+        fname
+        for fname in functions.keys()
+        if isinstance(fname, str) and _to_lookup_key(fname) == lookup
+    ]
+    if len(matches) == 1:
+        return matches[0]
+
+    return name
 
 
 def _get_function_schema(function_obj: Any) -> Dict[str, Any]:
@@ -247,9 +306,10 @@ def install_agno_argument_patch() -> None:
         call_id: Optional[str] = None,
         functions: Optional[Dict[str, Any]] = None,
     ):
-        repaired_args = _repair_tool_arguments(name=name, arguments=arguments, functions=functions)
+        resolved_name = _resolve_tool_name(name=name, functions=functions)
+        repaired_args = _repair_tool_arguments(name=resolved_name, arguments=arguments, functions=functions)
         return original_get_function_call(
-            name=name,
+            name=resolved_name,
             arguments=repaired_args,
             call_id=call_id,
             functions=functions,

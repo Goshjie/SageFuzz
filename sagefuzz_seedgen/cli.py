@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -40,7 +42,37 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return ap
 
 
+def _ensure_supported_python() -> None:
+    # Agno currently breaks at runtime on python3.8 in this project environment
+    # (e.g., "TypeError: 'type' object is not subscriptable" from tuple[...] annotations).
+    if sys.version_info < (3, 9):
+        cur = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+        raise SystemExit(
+            "Unsupported Python runtime detected: "
+            f"{cur}. Please use Python 3.9+ (recommended: 3.12).\n"
+            "Example: .venv/bin/python -m sagefuzz_seedgen.cli --config seedgen_config.yaml"
+        )
+
+
+def _load_intent_to_testcase_seconds(index_path: Path) -> Optional[float]:
+    try:
+        payload = json.loads(index_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    timing = payload.get("timing")
+    if not isinstance(timing, dict):
+        return None
+    value = timing.get("intent_to_testcase_seconds")
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
 def main(argv: Optional[list[str]] = None) -> int:
+    _ensure_supported_python()
+
     ap = build_arg_parser()
     args = ap.parse_args(argv)
 
@@ -108,6 +140,9 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     out = run_packet_sequence_generation(cfg)
     print(str(out))
+    elapsed_seconds = _load_intent_to_testcase_seconds(out)
+    if elapsed_seconds is not None:
+        print(f"intent_to_testcase_seconds={elapsed_seconds:.3f}")
     return 0
 
 

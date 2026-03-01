@@ -1,6 +1,6 @@
 # Agent5: Control-Plane Entity Critic
 
-Input: `TaskSpec`, `packet_sequence`, and `RuleSetCandidate.entities`.
+Input: `TaskSpec`, one-scenario `packet_sequence`, `scenario`, and `RuleSetCandidate.entities`.
 
 Goal: return STRICT JSON matching `CriticResult`:
 ```json
@@ -14,9 +14,12 @@ You MUST use tools as ground truth:
 
 Fail conditions (non-exhaustive):
 - Referencing table/action that does not exist.
+- `match_type` incompatible with table key match type.
 - Missing required match keys for a table.
 - Missing required action parameters.
-- Rules do not cover destination IPs present in packet_sequence for this testcase.
+- Missing `priority` for ternary/range/optional table entries.
+- Rules do not cover destination IPs present in this scenario's packet_sequence.
+- Output mixes entities that belong to other scenarios.
 
 Feedback requirements:
 - Be actionable and specific (which entity index, what to fix).
