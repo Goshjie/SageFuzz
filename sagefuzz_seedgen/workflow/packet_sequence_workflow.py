@@ -16,6 +16,7 @@ from sagefuzz_seedgen.runtime.initializer import initialize_program_context
 from sagefuzz_seedgen.schemas import (
     AttemptResult,
     Agent1Output,
+    ControlPlaneOperation,
     CriticResult,
     OraclePacketPrediction,
     OraclePredictionCandidate,
@@ -156,6 +157,34 @@ def _group_packets_by_scenario(packet_sequence: List[Any]) -> Dict[str, List[Any
         scenario = _scenario_name(getattr(packet, "scenario", None))
         out.setdefault(scenario, []).append(packet)
     return out
+
+
+def _normalize_control_plane_sequence(candidate: RuleSetCandidate) -> List[ControlPlaneOperation]:
+    """Ensure testcase always contains explicit ordered control-plane operations."""
+    if candidate.control_plane_sequence:
+        normalized: List[ControlPlaneOperation] = []
+        for idx, op in enumerate(candidate.control_plane_sequence, 1):
+            # Keep user-provided semantic order while enforcing canonical increasing order.
+            normalized.append(op.model_copy(update={"order": idx}))
+        return normalized
+
+    # Fallback: derive one apply operation per generated entity in order.
+    derived: List[ControlPlaneOperation] = []
+    for idx, rule in enumerate(candidate.entities, 1):
+        derived.append(
+            ControlPlaneOperation(
+                order=idx,
+                operation_type="apply_table_entry",
+                target=rule.table_name,
+                entity_index=idx,
+                parameters={
+                    "match_type": rule.match_type,
+                    "action_name": rule.action_name,
+                },
+                expected_effect=f"entity[{idx}] applied",
+            )
+        )
+    return derived
 
 
 def _resolve_output_paths(run_id: str, out_path: Optional[Path]) -> Tuple[Path, Path]:
@@ -669,6 +698,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 model_input=entity_gen_in,
                 model_output=entity_candidate.model_dump(),
             )
+            normalized_cp_sequence = _normalize_control_plane_sequence(entity_candidate)
 
             entity_critic_in = {
                 "scenario": scenario,
@@ -676,7 +706,10 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 "task": task.model_dump(),
                 "user_intent": user_intent_payload,
                 "packet_sequence": [p.model_dump() for p in packets_for_scenario],
-                "rule_set_candidate": entity_candidate.model_dump(),
+                "rule_set_candidate": {
+                    **entity_candidate.model_dump(),
+                    "control_plane_sequence": [op.model_dump() for op in normalized_cp_sequence],
+                },
             }
             entity_critic_in_str = (
                 "Evaluate control-plane entities and return CriticResult STRICT JSON:\n\n"
@@ -723,6 +756,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 task=task,
                 packet_sequence=packets_for_scenario,
                 entities=entity_candidate.entities,
+                control_plane_sequence=normalized_cp_sequence,
             )
             recorder.record(
                 agent_role="deterministic_validator",
@@ -733,12 +767,13 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                     "task": task.model_dump(),
                     "packet_sequence": [p.model_dump() for p in packets_for_scenario],
                     "entities": [e.model_dump() for e in entity_candidate.entities],
+                    "control_plane_sequence": [op.model_dump() for op in normalized_cp_sequence],
                 },
                 model_output=det_entity_critic.model_dump(),
             )
 
             final_entity_critic = det_entity_critic if det_entity_critic.status == "FAIL" else llm_entity_critic
-            last_entities = entity_candidate
+            last_entities = entity_candidate.model_copy(update={"control_plane_sequence": normalized_cp_sequence})
             last_entity_critic = final_entity_critic
             last_entity_feedback = final_entity_critic.feedback
 
@@ -769,6 +804,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 "user_intent": user_intent_payload,
                 "packet_sequence": [p.model_dump() for p in packets_for_scenario],
                 "entities": [e.model_dump() for e in last_entities.entities],
+                "control_plane_sequence": [op.model_dump() for op in last_entities.control_plane_sequence],
                 "topology": topo_summary.model_dump(),
                 "previous_feedback": last_oracle_feedback,
             }
@@ -870,6 +906,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             task_id=task.task_id,
             packet_sequence=packets_for_scenario,
             entities=last_entities.entities,
+            control_plane_sequence=last_entities.control_plane_sequence,
             oracle_prediction=oracle_prediction,
             oracle_comparison={
                 "status": "PREDICTION_ONLY",
@@ -886,6 +923,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 "entities_feedback": last_entity_critic.feedback,
                 "attempts_packet_sequence": attempt_count,
                 "attempts_entities": entity_attempt_count,
+                "control_plane_operation_count": len(last_entities.control_plane_sequence),
                 "oracle_prediction_status": scenario_oracle_prediction_status.get(scenario),
                 "oracle_prediction_feedback": scenario_oracle_prediction_feedback.get(scenario),
                 "attempts_oracle_prediction": scenario_oracle_prediction_attempts.get(scenario, 0),
@@ -930,6 +968,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 "case_file": case_files[scenario],
                 "packet_count": len(scenario_output.packet_sequence) if scenario_output else 0,
                 "entity_count": len(scenario_output.entities) if scenario_output else 0,
+                "control_plane_operation_count": len(scenario_output.control_plane_sequence) if scenario_output else 0,
                 "entities_status": scenario_entity_status.get(scenario),
                 "entities_feedback": scenario_entity_feedback.get(scenario),
                 "attempts_entities": scenario_entity_attempts.get(scenario, 0),
@@ -958,6 +997,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             "neutral_cases": len(cases_by_kind["neutral"]),
             "passed_case_count": sum(1 for c in case_records if c.get("entities_status") == "PASS"),
             "failed_case_count": sum(1 for c in case_records if c.get("entities_status") == "FAIL"),
+            "total_control_plane_operations": sum(int(c.get("control_plane_operation_count") or 0) for c in case_records),
             "oracle_prediction_pass_case_count": sum(
                 1 for c in case_records if c.get("oracle_prediction_status") == "PASS"
             ),

@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 
 from sagefuzz_seedgen.runtime.initializer import initialize_program_context
-from sagefuzz_seedgen.schemas import PacketSpec, TaskSpec, TableRule
+from sagefuzz_seedgen.schemas import ControlPlaneOperation, PacketSpec, TaskSpec, TableRule
 from sagefuzz_seedgen.workflow.validation import validate_control_plane_entities
 
 
@@ -60,11 +60,28 @@ class TestEntityValidation(unittest.TestCase):
                 action_data={"dstAddr": "08:00:00:00:01:11", "port": 1},
             ),
         ]
+        control_plane_sequence = [
+            ControlPlaneOperation(
+                order=1,
+                operation_type="apply_table_entry",
+                target="MyIngress.ipv4_lpm",
+                entity_index=1,
+                parameters={"action_name": "MyIngress.ipv4_forward"},
+            ),
+            ControlPlaneOperation(
+                order=2,
+                operation_type="apply_table_entry",
+                target="MyIngress.ipv4_lpm",
+                entity_index=2,
+                parameters={"action_name": "MyIngress.ipv4_forward"},
+            ),
+        ]
         res = validate_control_plane_entities(
             ctx=self.ctx,
             task=self._task(),
             packet_sequence=self._packets(),
             entities=entities,
+            control_plane_sequence=control_plane_sequence,
         )
         self.assertEqual(res.status, "PASS", res.feedback)
 
@@ -166,6 +183,84 @@ class TestEntityValidation(unittest.TestCase):
             entities=entities,
         )
         self.assertEqual(res.status, "PASS", res.feedback)
+
+    def test_control_plane_sequence_requires_apply_order(self) -> None:
+        entities = [
+            TableRule(
+                table_name="MyIngress.ipv4_lpm",
+                match_type="lpm",
+                match_keys={"hdr.ipv4.dstAddr": ["10.0.3.3", 32]},
+                action_name="MyIngress.ipv4_forward",
+                action_data={"dstAddr": "08:00:00:00:03:33", "port": 3},
+            ),
+            TableRule(
+                table_name="MyIngress.ipv4_lpm",
+                match_type="lpm",
+                match_keys={"hdr.ipv4.dstAddr": ["10.0.1.1", 32]},
+                action_name="MyIngress.ipv4_forward",
+                action_data={"dstAddr": "08:00:00:00:01:11", "port": 1},
+            ),
+        ]
+        bad_sequence = [
+            ControlPlaneOperation(
+                order=1,
+                operation_type="apply_table_entry",
+                target="MyIngress.ipv4_lpm",
+                entity_index=2,
+                parameters={},
+            ),
+            ControlPlaneOperation(
+                order=2,
+                operation_type="apply_table_entry",
+                target="MyIngress.ipv4_lpm",
+                entity_index=1,
+                parameters={},
+            ),
+        ]
+        res = validate_control_plane_entities(
+            ctx=self.ctx,
+            task=self._task(),
+            packet_sequence=self._packets(),
+            entities=entities,
+            control_plane_sequence=bad_sequence,
+        )
+        self.assertEqual(res.status, "FAIL")
+        self.assertIn("entity_index order", res.feedback)
+
+    def test_control_plane_sequence_requires_strict_order(self) -> None:
+        entities = [
+            TableRule(
+                table_name="MyIngress.ipv4_lpm",
+                match_type="lpm",
+                match_keys={"hdr.ipv4.dstAddr": ["10.0.3.3", 32]},
+                action_name="MyIngress.ipv4_forward",
+                action_data={"dstAddr": "08:00:00:00:03:33", "port": 3},
+            )
+        ]
+        bad_sequence = [
+            ControlPlaneOperation(
+                order=1,
+                operation_type="apply_table_entry",
+                target="MyIngress.ipv4_lpm",
+                entity_index=1,
+                parameters={},
+            ),
+            ControlPlaneOperation(
+                order=1,
+                operation_type="read_register",
+                target="reg_state",
+                parameters={"index": 0},
+            ),
+        ]
+        res = validate_control_plane_entities(
+            ctx=self.ctx,
+            task=self._task(),
+            packet_sequence=[self._packets()[0]],
+            entities=entities,
+            control_plane_sequence=bad_sequence,
+        )
+        self.assertEqual(res.status, "FAIL")
+        self.assertIn("strictly increasing", res.feedback)
 
 
 if __name__ == "__main__":

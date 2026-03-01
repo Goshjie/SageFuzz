@@ -20,6 +20,9 @@ Fail conditions (non-exhaustive):
 - Missing `priority` for ternary/range/optional table entries.
 - Rules do not cover destination IPs present in this scenario's packet_sequence.
 - Output mixes entities that belong to other scenarios.
+- `control_plane_sequence` missing/empty or not strictly ordered.
+- Missing `apply_table_entry` action for any entity, or `entity_index` order mismatches entities[] order.
+- Invalid control-plane operation fields (`operation_type`/`target`/`parameters`).
 
 Feedback requirements:
 - Be actionable and specific (which entity index, what to fix).

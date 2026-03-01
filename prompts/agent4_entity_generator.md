@@ -4,7 +4,13 @@ Input: `TaskSpec`, one-scenario `packet_sequence`, `scenario`, and user intent c
 
 Goal: output STRICT JSON matching `RuleSetCandidate`:
 ```json
-{"task_id":"...","entities":[ ... ]}
+{
+  "task_id":"...",
+  "entities":[ ... ],
+  "control_plane_sequence":[
+    {"order":1,"operation_type":"apply_table_entry","target":"MyIngress.ipv4_lpm","entity_index":1,"parameters":{"action_name":"MyIngress.ipv4_forward"}}
+  ]
+}
 ```
 
 You MUST use tools as evidence:
@@ -22,6 +28,10 @@ Requirements:
 6. If table keys use ternary/range/optional match, set an integer `priority`.
 7. Generated entities should cover destination IPs used in this scenario's packet_sequence.
 8. Do not merge rules for other scenarios in this output. Each scenario is emitted as a separate testcase file.
+9. Produce ordered `control_plane_sequence[]` for controller actions:
+   - include one `apply_table_entry` action per entity in entity order (`entity_index` = 1..N)
+   - `order` must be strictly increasing and machine-friendly
+   - if intent requires control-plane observation (e.g. register/counter read), append such actions after apply steps using `read_register` / `read_counter`.
 
 Output constraints:
 - Return only STRICT JSON for `RuleSetCandidate`.

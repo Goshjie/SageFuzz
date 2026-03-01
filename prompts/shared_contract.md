@@ -35,6 +35,10 @@ Critical rules:
    - `match_keys` field names should follow table key expressions (e.g. `hdr.ipv4.dstAddr`).
    - `match_type` must align with table key definition; ternary/range/optional entries require `priority`.
    - Rules should still align with packet_sequence endpoints (destination IP coverage).
+   - Also output ordered `RuleSetCandidate.control_plane_sequence[]` controller actions:
+     - each action has `order` (1-based), `operation_type`, `target`, `parameters`
+     - each generated entity must appear as one `apply_table_entry` action with matching `entity_index`
+     - keep sequence order deterministic and machine-consumable.
 
 9. Tool parameter catalog (use exact argument names):
    - `get_stateful_objects()` -> `{}`

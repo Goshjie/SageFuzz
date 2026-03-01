@@ -163,9 +163,38 @@ class TableRule(BaseModel):
     priority: Optional[int] = None
 
 
+class ControlPlaneOperation(BaseModel):
+    order: int = Field(..., ge=1, description="1-based operation order within this testcase scenario.")
+    operation_type: Literal[
+        "apply_table_entry",
+        "read_register",
+        "write_register",
+        "read_counter",
+        "custom",
+    ] = Field(..., description="Controller-side operation kind.")
+    target: str = Field(..., description="Target object name, e.g. table/register/counter identifier.")
+    parameters: Dict[str, Any] = Field(default_factory=dict, description="Operation parameters.")
+    entity_index: Optional[int] = Field(
+        None,
+        ge=1,
+        description=(
+            "1-based index of related entities[] entry when operation_type=apply_table_entry. "
+            "Null for non-entity operations."
+        ),
+    )
+    expected_effect: Optional[str] = Field(
+        None,
+        description="Optional expected effect/observation for this operation.",
+    )
+
+
 class RuleSetCandidate(BaseModel):
     task_id: str
     entities: List[TableRule]
+    control_plane_sequence: List[ControlPlaneOperation] = Field(
+        default_factory=list,
+        description="Ordered controller operations for this scenario.",
+    )
 
 
 class OraclePacketPrediction(BaseModel):
@@ -217,6 +246,7 @@ class TestcaseOutput(BaseModel):
     task_id: str
     packet_sequence: List[PacketSpec]
     entities: List[TableRule] = Field(default_factory=list)
+    control_plane_sequence: List[ControlPlaneOperation] = Field(default_factory=list)
     oracle_prediction: Optional[OraclePredictionCandidate] = None
     oracle_comparison: Dict[str, Any] = Field(default_factory=dict)
     meta: Dict[str, Any] = Field(default_factory=dict)

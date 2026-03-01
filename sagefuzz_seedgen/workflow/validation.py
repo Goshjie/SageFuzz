@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from sagefuzz_seedgen.runtime.program_context import ProgramContext
 from sagefuzz_seedgen.schemas import (
+    ControlPlaneOperation,
     CriticResult,
     PacketSpec,
     SequenceScenarioSpec,
@@ -412,6 +413,7 @@ def validate_control_plane_entities(
     task: TaskSpec,
     packet_sequence: List[PacketSpec],
     entities: List[TableRule],
+    control_plane_sequence: Optional[List[ControlPlaneOperation]] = None,
 ) -> CriticResult:
     """Deterministic validator for generated control-plane table rules."""
 
@@ -499,5 +501,50 @@ def validate_control_plane_entities(
             status="FAIL",
             feedback=f"Task role binding host(s) are not present in topology: {missing_role_hosts}.",
         )
+
+    if control_plane_sequence is not None:
+        if not control_plane_sequence:
+            return CriticResult(
+                status="FAIL",
+                feedback="control_plane_sequence is empty; provide ordered operations for this scenario.",
+            )
+        last_order = 0
+        apply_entity_indexes: List[int] = []
+        for op in control_plane_sequence:
+            if op.order <= last_order:
+                return CriticResult(
+                    status="FAIL",
+                    feedback=(
+                        "control_plane_sequence order must be strictly increasing; "
+                        f"got order {op.order} after {last_order}."
+                    ),
+                )
+            last_order = op.order
+
+            if op.operation_type == "apply_table_entry":
+                if op.entity_index is None:
+                    return CriticResult(
+                        status="FAIL",
+                        feedback="apply_table_entry operation must include entity_index.",
+                    )
+                if op.entity_index < 1 or op.entity_index > len(entities):
+                    return CriticResult(
+                        status="FAIL",
+                        feedback=(
+                            f"apply_table_entry operation references out-of-range entity_index={op.entity_index}; "
+                            f"entities length={len(entities)}."
+                        ),
+                    )
+                apply_entity_indexes.append(op.entity_index)
+
+        expected_indexes = list(range(1, len(entities) + 1))
+        if apply_entity_indexes != expected_indexes:
+            return CriticResult(
+                status="FAIL",
+                feedback=(
+                    "control_plane_sequence must apply all entities in order using apply_table_entry; "
+                    f"expected entity_index order {expected_indexes}, got {apply_entity_indexes}."
+                ),
+            )
 
     return CriticResult(status="PASS", feedback="Control-plane entities are structurally valid and aligned with packet_sequence.")
