@@ -164,6 +164,7 @@
   - `get_header_definitions()`：查阅头部具体包含哪些字段（如 TCP 包含 flags, seq, ack）。
   - `get_header_bits()`：获取字段位宽，确保生成的数值不越界。
 - **工作逻辑：** 依据网络协议常识与解析器约束，生成符合特定路径走向的结构化载荷。在处理有状态任务时，内部维护“虚拟状态机”，确保生成的序列号和确认号在逻辑上连续。
+- **拓扑发送者绑定说明：** `tx_host` 由智能体二在生成 `packet_sequence` 时直接输出（基于拓扑工具证据），主控调度器再进行确定性校验与落盘，不再单独拆分独立发送者分配智能体。
 
 ### 智能体三：input pkt逻辑审查员 (Constraint Critic Agent) —— “找茬，防幻觉”
 
@@ -347,21 +348,6 @@
   - **匹配键校验：** 如果源码要求 `dstAddr` 是 `lpm`（最长前缀匹配），审查员会检查 Entities JSON 中是否错写成了 `exact`。
   - **参数校验：** 检查动作所需参数个数与类型是否严格对齐。
 - **输出 (Output)：** `PASS` 或 `FAIL + 修复意见`（例如：“错误：`ipv4_lpm` 表的匹配键缺少掩码长度，请补充。” -> 打回重构）。
-
-### 智能体六：拓扑与发送者分配师 (Topology & Sender Assigner Agent)
-
-很多面向网络行为的测试用例，其关键不在于“包长什么样”，而在于**谁先发起、谁只能回复、以及每个包由拓扑中的哪个 host 发送**。例如防火墙场景中，常见策略是：**internal 可发起连接，external 只能作为 server 端回复**。
-
-- **核心职责：** 将已生成的数据包序列与控制面规则（Entities/Rules）绑定到具体拓扑，明确每个数据包的发送者（`tx_host`），并可扩展推导 ingress_port/链路路径等运行时绑定信息。
-- **输入 (Input)：** 智能体二/三输出的 `packet_sequence` + 智能体四/五输出的 Entities（如果已实现）+ Topology（hosts/links）。
-- **依赖工具链 (Required Tools)：**
-  - `get_topology_hosts()` / `get_topology_links()` / `get_host_info(host_id)`：获取 host/IP/MAC 与链路。
-  - `classify_host_zone(host_id)`：确定 internal/external 角色归类。
-  - （可选）`get_jump_dict()` / `get_path_constraints()`：辅助推断从 host 到目标表路径的可能性。
-- **输出 (Output)：** 在 JSON testcase 中为每个 packet 填充 `tx_host`（例如 `h1`/`h3`），并输出 `topology_ref` 以保证可复现。
-- **阶段性说明：** 若当前工程阶段尚未实现 Agent6，可先由主控调度器按默认规则（基于 topology 工具证据）为 packet_sequence 填充 `tx_host` 占位值；后续再用 Agent6 替换为更精确的智能绑定。
-
-
 
 ## 四、智能体交互流程
 

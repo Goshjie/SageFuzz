@@ -34,6 +34,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--model-id", type=str, default=None)
     ap.add_argument("--api-key", type=str, default=None)
     ap.add_argument("--base-url", type=str, default=None)
+    ap.add_argument("--model-timeout", type=float, default=None, help="Model API timeout in seconds.")
+    ap.add_argument("--model-retries", type=int, default=None, help="Model API retry count.")
 
     return ap
 
@@ -65,6 +67,16 @@ def main(argv: Optional[list[str]] = None) -> int:
         model_id=args.model_id or model_section.get("model_id") or env_model.model_id,
         api_key=args.api_key or model_section.get("api_key") or env_model.api_key,
         base_url=args.base_url or model_section.get("base_url") or env_model.base_url,
+        timeout_seconds=(
+            float(args.model_timeout)
+            if args.model_timeout is not None
+            else float(model_section.get("timeout_seconds", env_model.timeout_seconds))
+        ),
+        max_retries=(
+            int(args.model_retries)
+            if args.model_retries is not None
+            else int(model_section.get("max_retries", env_model.max_retries))
+        ),
     )
 
     # Optional: allow overriding paths/run config from config file while keeping CLI defaults.

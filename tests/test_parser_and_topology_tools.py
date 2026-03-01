@@ -4,7 +4,7 @@ from pathlib import Path
 from sagefuzz_seedgen.runtime.initializer import initialize_program_context
 from sagefuzz_seedgen.tools.context_registry import set_program_context
 from sagefuzz_seedgen.tools.parser_tools import get_header_bits, get_parser_paths, get_parser_transitions
-from sagefuzz_seedgen.tools.topology_tools import classify_host_zone
+from sagefuzz_seedgen.tools.topology_tools import classify_host_zone, get_host_info
 
 
 class TestParserAndTopologyTools(unittest.TestCase):
@@ -40,7 +40,13 @@ class TestParserAndTopologyTools(unittest.TestCase):
         self.assertEqual(z1["zone"], "internal")
         self.assertEqual(z3["zone"], "external")
 
+    def test_host_tools_with_host_id(self) -> None:
+        z3 = classify_host_zone(host_id="h3")
+        h1 = get_host_info(host_id="h1")
+        self.assertEqual(z3["zone"], "external")
+        self.assertEqual(h1["host_id"], "h1")
+        self.assertTrue(isinstance(h1.get("ip"), str))
+
 
 if __name__ == "__main__":
     unittest.main()
-

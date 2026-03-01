@@ -87,6 +87,23 @@ class PacketSequenceCandidate(BaseModel):
     packet_sequence: List[PacketSpec]
 
 
+class TableRule(BaseModel):
+    table_name: str
+    match_type: str = Field(..., description="Table key match type, e.g. exact/lpm/ternary.")
+    match_keys: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Table match keys, e.g. {'hdr.ipv4.dstAddr': ['10.0.3.3', 32]}",
+    )
+    action_name: str
+    action_data: Dict[str, Any] = Field(default_factory=dict, description="Action parameters keyed by parameter name.")
+    priority: Optional[int] = None
+
+
+class RuleSetCandidate(BaseModel):
+    task_id: str
+    entities: List[TableRule]
+
+
 class Agent1Output(BaseModel):
     """Semantic Analyzer output: either a TaskSpec, or questions for the user."""
 
@@ -112,4 +129,5 @@ class TestcaseOutput(BaseModel):
     topology: TopologySummary
     task_id: str
     packet_sequence: List[PacketSpec]
+    entities: List[TableRule] = Field(default_factory=list)
     meta: Dict[str, Any] = Field(default_factory=dict)

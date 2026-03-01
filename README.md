@@ -24,6 +24,9 @@ cp seedgen_config.example.yaml seedgen_config.yaml
 .venv/bin/python -m sagefuzz_seedgen.cli --config seedgen_config.yaml
 
 # Option B: if intent is missing, Agent1 will ask questions interactively in the terminal.
+
+# Optional: if provider/network is unstable, increase timeout/retries
+.venv/bin/python -m sagefuzz_seedgen.cli --config seedgen_config.yaml --model-timeout 120 --model-retries 3
 ```
 
 Tests (no model required):
@@ -33,3 +36,4 @@ Tests (no model required):
 
 激活并使用
 source .venv/bin/activate
+python -m sagefuzz_seedgen.cli --config seedgen_config.yaml

@@ -29,7 +29,13 @@ def get_host_info(host_id: str) -> Dict[str, Any]:
     ctx = get_program_context()
     info = ctx.host_info.get(host_id, {})
     sw = ctx.host_to_switch.get(host_id)
-    return {"host_id": host_id, "ip": info.get("ip"), "mac": info.get("mac"), "switch": sw, "commands": info.get("commands")}
+    return {
+        "host_id": host_id,
+        "ip": info.get("ip"),
+        "mac": info.get("mac"),
+        "switch": sw,
+        "commands": info.get("commands"),
+    }
 
 
 def classify_host_zone(host_id: str) -> Dict[str, Any]:

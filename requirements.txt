@@ -4,3 +4,4 @@ networkx>=3.0
 pydot>=2.0
 pytest>=8.0
 openai>=1.0.0
+json-repair>=0.58.0

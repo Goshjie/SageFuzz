@@ -17,9 +17,35 @@ Critical rules:
 5. Directional firewall intent (current DoD):
    - internal host initiates (client sends SYN)
    - external host only replies (server sends SYN-ACK/ACK)
+   - control-plane entities should align with packet_sequence endpoints (destination IP coverage)
 
 6. Intent-driven rule:
    - Do not assume internal/external roles unless the user intent provides them or you can justify them via tool evidence.
    - If intent is missing required pieces, ask questions rather than guessing.
    - If you ask the user questions, the questions must be in Chinese (简体中文).
    - When asking questions, use structured `UserQuestion` objects (field + question_zh + required + expected_format) so the orchestrator can collect answers.
+7. Tool-call argument format:
+   - Function/tool arguments MUST be valid JSON objects.
+   - For tools with no parameters, call with `{}` as the arguments object.
+   - Never output partial JSON such as `{` or malformed argument strings.
+8. Control-plane entity contract:
+   - For `RuleSetCandidate.entities[]`, use concrete `table_name`, `match_keys`, `action_name`, `action_data`.
+   - `match_keys` field names should follow table key expressions (e.g. `hdr.ipv4.dstAddr`).
+
+9. Tool parameter catalog (use exact argument names):
+   - `get_stateful_objects()` -> `{}`
+   - `get_parser_paths()` -> `{}`
+   - `get_parser_transitions()` -> `{}`
+   - `get_header_definitions()` -> `{}`
+   - `get_header_bits(field_expr)` -> `{"field_expr":"Ethernet.etherType"}`
+   - `get_jump_dict(graph_name="MyIngress")` -> `{"graph_name":"MyIngress"}`
+   - `get_ranked_tables(graph_name="MyIngress")` -> `{"graph_name":"MyIngress"}`
+   - `get_path_constraints(target, graph_name="MyIngress")` -> `{"target":"MyIngress.ipv4_lpm","graph_name":"MyIngress"}`
+   - `get_topology_hosts()` -> `{}`
+   - `get_topology_links()` -> `{}`
+   - `get_host_info(host_id)` -> `{"host_id":"h1"}`
+   - `classify_host_zone(host_id)` -> `{"host_id":"h3"}`
+   - `choose_default_host_pair()` -> `{}`
+   - `get_tables()` -> `{}`
+   - `get_table(table_name)` -> `{"table_name":"MyIngress.ipv4_lpm"}`
+   - `get_action_code(action_name)` -> `{"action_name":"MyIngress.ipv4_forward"}`

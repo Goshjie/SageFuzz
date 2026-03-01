@@ -9,6 +9,11 @@ from agno.team import Team
 
 from sagefuzz_seedgen.agents.prompts_loader import load_prompt
 from sagefuzz_seedgen.config import ModelConfig
+from sagefuzz_seedgen.tools.control_plane_tools import (
+    get_action_code_tool,
+    get_table_tool,
+    get_tables_tool,
+)
 from sagefuzz_seedgen.tools.graph_tools import (
     get_jump_dict_tool,
     get_path_constraints_tool,
@@ -35,14 +40,22 @@ def _build_model(model: ModelConfig) -> OpenAILike:
         raise ValueError(
             "Missing AGNO_API_KEY (or --api-key). This generator needs a model key to run the agents."
         )
-    return OpenAILike(id=model.model_id, api_key=model.api_key, base_url=model.base_url)
+    return OpenAILike(
+        id=model.model_id,
+        api_key=model.api_key,
+        base_url=model.base_url,
+        timeout=float(model.timeout_seconds),
+        max_retries=int(model.max_retries),
+    )
 
 
-def build_agents_and_team(*, model_cfg: ModelConfig, prompts_dir: Path) -> Tuple[Agent, Agent, Agent, Team]:
+def build_agents_and_team(*, model_cfg: ModelConfig, prompts_dir: Path) -> Tuple[Agent, Agent, Agent, Agent, Agent, Team]:
     shared = load_prompt(prompts_dir, "shared_contract.md")
     a1_prompt = shared + "\n\n" + load_prompt(prompts_dir, "agent1_semantic_analyzer.md")
     a2_prompt = shared + "\n\n" + load_prompt(prompts_dir, "agent2_sequence_constructor.md")
     a3_prompt = shared + "\n\n" + load_prompt(prompts_dir, "agent3_constraint_critic.md")
+    a4_prompt = shared + "\n\n" + load_prompt(prompts_dir, "agent4_entity_generator.md")
+    a5_prompt = shared + "\n\n" + load_prompt(prompts_dir, "agent5_entity_critic.md")
 
     tools: List = [
         # CFG/graph tools
@@ -62,6 +75,10 @@ def build_agents_and_team(*, model_cfg: ModelConfig, prompts_dir: Path) -> Tuple
         get_host_info_tool,
         classify_host_zone_tool,
         choose_default_host_pair_tool,
+        # Control-plane tools
+        get_tables_tool,
+        get_table_tool,
+        get_action_code_tool,
     ]
 
     model = _build_model(model_cfg)
@@ -96,8 +113,28 @@ def build_agents_and_team(*, model_cfg: ModelConfig, prompts_dir: Path) -> Tuple
         use_json_mode=True,
     )
 
+    agent4 = Agent(
+        name="Entity Generator",
+        role="entity_generator",
+        model=model,
+        instructions=a4_prompt,
+        tools=tools,
+        markdown=False,
+        use_json_mode=True,
+    )
+
+    agent5 = Agent(
+        name="Entity Critic",
+        role="entity_critic",
+        model=model,
+        instructions=a5_prompt,
+        tools=tools,
+        markdown=False,
+        use_json_mode=True,
+    )
+
     team = Team(
-        members=[agent1, agent2, agent3],
+        members=[agent1, agent2, agent3, agent4, agent5],
         name="SeedgenTeam",
         model=model,
         share_member_interactions=True,
@@ -106,4 +143,4 @@ def build_agents_and_team(*, model_cfg: ModelConfig, prompts_dir: Path) -> Tuple
         markdown=False,
     )
 
-    return agent1, agent2, agent3, team
+    return agent1, agent2, agent3, agent4, agent5, team

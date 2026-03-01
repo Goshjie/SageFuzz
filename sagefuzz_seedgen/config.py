@@ -11,6 +11,8 @@ class ModelConfig:
     model_id: str
     api_key: str
     base_url: str
+    timeout_seconds: float = 90.0
+    max_retries: int = 2
 
     @staticmethod
     def from_env(
@@ -24,7 +26,23 @@ class ModelConfig:
         model_id = getenv(model_id_env) or default_model_id
         api_key = getenv(api_key_env) or ""
         base_url = getenv(base_url_env) or default_base_url
-        return ModelConfig(model_id=model_id, api_key=api_key, base_url=base_url)
+        timeout_env = getenv("AGNO_TIMEOUT_SECONDS")
+        retry_env = getenv("AGNO_MAX_RETRIES")
+        try:
+            timeout_seconds = float(timeout_env) if timeout_env else 90.0
+        except Exception:
+            timeout_seconds = 90.0
+        try:
+            max_retries = int(retry_env) if retry_env else 2
+        except Exception:
+            max_retries = 2
+        return ModelConfig(
+            model_id=model_id,
+            api_key=api_key,
+            base_url=base_url,
+            timeout_seconds=timeout_seconds,
+            max_retries=max_retries,
+        )
 
 
 @dataclass(frozen=True)

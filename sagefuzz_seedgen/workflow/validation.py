@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from ipaddress import ip_interface
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from sagefuzz_seedgen.runtime.program_context import ProgramContext
-from sagefuzz_seedgen.schemas import CriticResult, PacketSpec, TaskSpec
+from sagefuzz_seedgen.schemas import CriticResult, PacketSpec, TableRule, TaskSpec
 
 
 def _get_flag(flags: object) -> str:
@@ -148,3 +149,133 @@ def validate_directional_tcp_state_trigger(
                 break
 
     return CriticResult(status="PASS", feedback="Directional TCP state trigger sequence is structurally valid.")
+
+
+def _normalize_ipv4(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    try:
+        if "/" in raw:
+            return str(ip_interface(raw).ip)
+        return str(ip_interface(f"{raw}/32").ip)
+    except Exception:
+        return None
+
+
+def _extract_packet_destination_ips(packet_sequence: List[PacketSpec]) -> Set[str]:
+    dst_ips: Set[str] = set()
+    for packet in packet_sequence:
+        if "IPv4" not in packet.protocol_stack:
+            continue
+        ip = _normalize_ipv4(packet.fields.get("IPv4.dst"))
+        if ip:
+            dst_ips.add(ip)
+    return dst_ips
+
+
+def _extract_rule_destination_ips(rule: TableRule) -> Set[str]:
+    out: Set[str] = set()
+    for key, value in rule.match_keys.items():
+        if "dstaddr" not in key.lower() and "ipv4.dst" not in key.lower():
+            continue
+        if isinstance(value, str):
+            ip = _normalize_ipv4(value)
+            if ip:
+                out.add(ip)
+            continue
+        if isinstance(value, (list, tuple)) and value:
+            ip = _normalize_ipv4(value[0])
+            if ip:
+                out.add(ip)
+            continue
+        if isinstance(value, dict):
+            for candidate in (value.get("value"), value.get("ip"), value.get("addr")):
+                ip = _normalize_ipv4(candidate)
+                if ip:
+                    out.add(ip)
+                    break
+    return out
+
+
+def _normalize_table_key_field(key: Any) -> Optional[str]:
+    if not isinstance(key, dict):
+        return None
+    target = key.get("target")
+    if isinstance(target, list) and len(target) == 2 and all(isinstance(x, str) for x in target):
+        return f"hdr.{target[0]}.{target[1]}"
+    if isinstance(target, str):
+        return target
+    return None
+
+
+def validate_control_plane_entities(
+    *,
+    ctx: ProgramContext,
+    task: TaskSpec,
+    packet_sequence: List[PacketSpec],
+    entities: List[TableRule],
+) -> CriticResult:
+    """Deterministic validator for generated control-plane table rules."""
+
+    if not entities:
+        return CriticResult(status="FAIL", feedback="entities is empty; at least one table rule is required.")
+
+    packet_dst_ips = _extract_packet_destination_ips(packet_sequence)
+    covered_ips: Set[str] = set()
+
+    for idx, rule in enumerate(entities, 1):
+        table = ctx.tables_by_name.get(rule.table_name)
+        if not isinstance(table, dict):
+            return CriticResult(status="FAIL", feedback=f"entity[{idx}]: unknown table '{rule.table_name}'.")
+
+        table_actions = table.get("actions", [])
+        if not (isinstance(table_actions, list) and rule.action_name in table_actions):
+            return CriticResult(
+                status="FAIL",
+                feedback=f"entity[{idx}]: action '{rule.action_name}' is not allowed by table '{rule.table_name}'.",
+            )
+
+        table_keys = table.get("key", [])
+        if isinstance(table_keys, list):
+            required_key_fields = {
+                field for field in (_normalize_table_key_field(item) for item in table_keys) if field is not None
+            }
+            missing = sorted(field for field in required_key_fields if field not in rule.match_keys)
+            if missing:
+                return CriticResult(
+                    status="FAIL",
+                    feedback=f"entity[{idx}]: missing required match key(s) {missing} for table '{rule.table_name}'.",
+                )
+
+        action = ctx.actions_by_name.get(rule.action_name)
+        if isinstance(action, dict):
+            runtime_data = action.get("runtime_data", [])
+            required_params = []
+            if isinstance(runtime_data, list):
+                required_params = [item.get("name") for item in runtime_data if isinstance(item, dict)]
+            missing_params = [p for p in required_params if isinstance(p, str) and p not in rule.action_data]
+            if missing_params:
+                return CriticResult(
+                    status="FAIL",
+                    feedback=f"entity[{idx}]: missing action_data parameter(s) {missing_params} for action '{rule.action_name}'.",
+                )
+
+        covered_ips.update(_extract_rule_destination_ips(rule))
+
+    # Keep rule generation aligned with packet sequence intent:
+    # destination IPs seen in packet_sequence should be covered by at least one table entry.
+    if packet_dst_ips:
+        uncovered = sorted(ip for ip in packet_dst_ips if ip not in covered_ips)
+        if uncovered:
+            return CriticResult(
+                status="FAIL",
+                feedback=f"entities do not cover packet_sequence destination IP(s): {uncovered}.",
+            )
+
+    if task.external_host not in ctx.host_info or task.internal_host not in ctx.host_info:
+        return CriticResult(status="FAIL", feedback="Task host roles are not present in topology.")
+
+    return CriticResult(status="PASS", feedback="Control-plane entities are structurally valid and aligned with packet_sequence.")

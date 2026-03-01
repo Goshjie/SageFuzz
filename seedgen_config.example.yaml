@@ -7,6 +7,9 @@ model:
   model_id: doubao-seed-2.0-code
   base_url: https://ark.cn-beijing.volces.com/api/coding/v3
   api_key: "PUT_YOUR_API_KEY_HERE"
+  # Optional model transport settings for unstable networks.
+  timeout_seconds: 120
+  max_retries: 3
 
 # Required: user intent (this system is intent-driven)
 intent:
