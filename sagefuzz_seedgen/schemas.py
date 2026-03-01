@@ -168,6 +168,29 @@ class RuleSetCandidate(BaseModel):
     entities: List[TableRule]
 
 
+class OraclePacketPrediction(BaseModel):
+    packet_id: int
+    expected_outcome: Literal["deliver", "drop", "unknown"]
+    expected_rx_host: Optional[str] = None
+    expected_rx_role: Optional[str] = None
+    expected_observation: Optional[str] = None
+    rationale: str
+
+
+class OraclePredictionCandidate(BaseModel):
+    task_id: str
+    scenario: str
+    packet_predictions: List[OraclePacketPrediction]
+    assumptions: List[str] = Field(default_factory=list)
+
+
+class RuntimePacketObservation(BaseModel):
+    packet_id: int
+    observed_outcome: Literal["deliver", "drop", "unknown"]
+    observed_rx_host: Optional[str] = None
+    observation_note: Optional[str] = None
+
+
 class Agent1Output(BaseModel):
     """Semantic Analyzer output: either a TaskSpec, or questions for the user."""
 
@@ -194,4 +217,6 @@ class TestcaseOutput(BaseModel):
     task_id: str
     packet_sequence: List[PacketSpec]
     entities: List[TableRule] = Field(default_factory=list)
+    oracle_prediction: Optional[OraclePredictionCandidate] = None
+    oracle_comparison: Dict[str, Any] = Field(default_factory=dict)
     meta: Dict[str, Any] = Field(default_factory=dict)

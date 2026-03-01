@@ -62,6 +62,7 @@ class RunConfig:
     max_retries: int = 4
     out_path: Optional[Path] = None
     session_state_path: Optional[Path] = None
+    runtime_observations_path: Optional[Path] = None
 
     # Topology defaults used for fallback role binding when the model omits role_bindings.
     default_initiator_host: str = "h1"

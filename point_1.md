@@ -349,6 +349,34 @@
   - **参数校验：** 检查动作所需参数个数与类型是否严格对齐。
 - **输出 (Output)：** `PASS` 或 `FAIL + 修复意见`（例如：“错误：`ipv4_lpm` 表的匹配键缺少掩码长度，请补充。” -> 打回重构）。
 
+### 智能体六：预言机结果规划师 (Oracle Prediction Planner Agent)
+
+这是一个**通用预言机预测智能体**，不绑定某个具体 P4 程序（例如不只服务于 stateful firewall）。它的作用是给出“每个输入包在当前测试场景下的可观测预期”，用于后续与真实运行结果自动比对。
+
+- **核心职责：** 基于 `task + packet_sequence + entities + topology` 输出可机读的“预言结果（预测版）”。
+- **输入 (Input)：**
+  1. 单个场景（scenario）的 `packet_sequence`；
+  2. 同场景的 `entities`（控制面规则）；
+  3. `TaskSpec`（含 `role_bindings` / `sequence_contract`）；
+  4. Topology 摘要（host/IP/MAC/links）；
+  5. （可选）执行前置假设（例如未知状态初始化策略）。
+- **依赖工具链 (Required Tools)：**
+  - `get_table(table_name)` / `get_action_code(action_name)`：理解规则语义与动作后果；
+  - `get_topology_hosts()` / `get_host_info(host_id)`：约束可达 host 与接收端映射；
+  - `get_parser_paths()` / `get_parser_transitions()`：确认包在数据面可被合法解析。
+- **工作逻辑：**
+  - 逐包输出预测：`deliver` / `drop` / `unknown`；
+  - 若 `deliver`，尽量给出 `expected_rx_host`（若无法确定则为 `null` 并说明原因）；
+  - 输出简短 `rationale`（证据链来源：contract / topology / table/action）；
+  - 对信息不足场景允许保守输出 `unknown`，禁止编造确定结论。
+- **输出 (Output)：** 结构化 JSON（可直接序列化入 testcase），例如每包包含：
+  - `packet_id`
+  - `expected_outcome` (`deliver|drop|unknown`)
+  - `expected_rx_host`（可选）
+  - `expected_rx_role`（可选）
+  - `expected_observation`（可选，说明“应被谁收到/应无接收”）
+  - `rationale`（证据化解释）
+
 ## 四、智能体交互流程
 
 ### 系统全局运行工作流 (Global System Workflow)
@@ -381,17 +409,17 @@
 2. **规则推演：** 智能体四充当 Semantic-HGRG，提取包头物理特征构建精准 Match Keys，并依据意图推演 Action 复杂参数，生成 Entities JSON。
 3. **合规质检：** 规则流转至**智能体五（审查员）**。若发现匹配键类型或动作参数产生幻觉，则打回重构；直至输出 `PASS`。
 
-#### 阶段四：物理降维实例化与预言机校准 (Physical Instantiation & Oracle Calibration)
+#### 阶段四：预言结果生成与真实执行对照 (Oracle Prediction & Runtime Comparison)
 
-1. **物理翻译：** 调度器剥夺 LLM 执行权，调用 **`convert_to_executable_format()`**。将高维报文 JSON 实例化为十六进制字节流（自动补齐校验和），并将 Entities JSON 编译为底层交换机 CLI 指令串。
-2. **基线执行：** 将报文与 CLI 规则下发至 P4CE 执行引擎，进行一轮预运算，获取初步输出报文。
-3. **状态注入与校准：** 调度器挂载手写的**增强型预言机（Enhanced Oracle）**，对初步输出进行检查与修正，生成 100% 正确的“判定基准（Intent Baseline / $\hat{y}$）”。
+1. **预言生成（Agent6）：** 在每个 scenario 上调用智能体六，输出逐包 `deliver/drop/unknown` 的预测结果（含可选 `expected_rx_host`）。
+2. **物理执行取真值：** 调度器调用执行引擎（如 P4CE）运行同一组输入报文与控制面实体，收集真实观测结果（是否被接收、接收方是谁）。
+3. **自动比对：** 调度器将“`Agent6 预测`”与“`Runtime 观测`”做逐包比较，产出 mismatch 列表与整体状态（`MATCH` / `MISMATCH` / `PENDING_RUNTIME`）。
 
 #### 阶段五：终极封包与基准落盘 (Testcase Packaging & Persistence)
 
 1. **时序绑定：** 主控调度器调用 **`merge_testcase_scenario()`** 工具。
-2. **封包落盘：** 将实例化输入报文 $x$、控制面实体规则 $c$、初始状态 $\sigma$ 以及预言机校准后的预期输出 $\hat{y}$，按严格时序强绑定，打包成标准的测试用例文件（如 `.stf` 脚本）。
-3. **任务终结：** 向 Java 端返回“生成成功”信号，该四元组 $\tilde{s}$ 正式入库，成为后续动态变异阶段的核心基准。
+2. **封包落盘：** 将输入报文 $x$、控制面实体规则 $c$、Agent6 预测 $\hat{y}_{agent}$、运行时真值 $y_{runtime}$ 与比对结果强绑定，打包成标准测试用例文件（如 `.stf` 或 Scenario JSON）。
+3. **任务终结：** 向 Java 端返回“生成成功”信号，产物可直接用于后续变异与回归分析。
 
 
 

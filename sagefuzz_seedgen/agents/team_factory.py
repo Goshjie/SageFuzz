@@ -63,13 +63,16 @@ def _build_model(model: ModelConfig) -> OpenAILike:
     )
 
 
-def build_agents_and_team(*, model_cfg: ModelConfig, prompts_dir: Path) -> Tuple[Agent, Agent, Agent, Agent, Agent, Team]:
+def build_agents_and_team(
+    *, model_cfg: ModelConfig, prompts_dir: Path
+) -> Tuple[Agent, Agent, Agent, Agent, Agent, Agent, Team]:
     shared = load_prompt(prompts_dir, "shared_contract.md")
     a1_prompt = shared + "\n\n" + load_prompt(prompts_dir, "agent1_semantic_analyzer.md")
     a2_prompt = shared + "\n\n" + load_prompt(prompts_dir, "agent2_sequence_constructor.md")
     a3_prompt = shared + "\n\n" + load_prompt(prompts_dir, "agent3_constraint_critic.md")
     a4_prompt = shared + "\n\n" + load_prompt(prompts_dir, "agent4_entity_generator.md")
     a5_prompt = shared + "\n\n" + load_prompt(prompts_dir, "agent5_entity_critic.md")
+    a6_prompt = shared + "\n\n" + load_prompt(prompts_dir, "agent6_oracle_predictor.md")
 
     tools: List = [
         # CFG/graph tools
@@ -147,8 +150,18 @@ def build_agents_and_team(*, model_cfg: ModelConfig, prompts_dir: Path) -> Tuple
         use_json_mode=True,
     )
 
+    agent6 = Agent(
+        name="Oracle Predictor",
+        role="oracle_predictor",
+        model=model,
+        instructions=a6_prompt,
+        tools=tools,
+        markdown=False,
+        use_json_mode=True,
+    )
+
     team = Team(
-        members=[agent1, agent2, agent3, agent4, agent5],
+        members=[agent1, agent2, agent3, agent4, agent5, agent6],
         name="SeedgenTeam",
         model=model,
         share_member_interactions=True,
@@ -157,4 +170,4 @@ def build_agents_and_team(*, model_cfg: ModelConfig, prompts_dir: Path) -> Tuple
         markdown=False,
     )
 
-    return agent1, agent2, agent3, agent4, agent5, team
+    return agent1, agent2, agent3, agent4, agent5, agent6, team

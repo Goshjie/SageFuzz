@@ -17,8 +17,11 @@ from sagefuzz_seedgen.schemas import (
     AttemptResult,
     Agent1Output,
     CriticResult,
+    OraclePacketPrediction,
+    OraclePredictionCandidate,
     PacketSequenceCandidate,
     RuleSetCandidate,
+    RuntimePacketObservation,
     TaskSpec,
     TestcaseOutput,
     TopologySummary,
@@ -177,6 +180,177 @@ def _split_case_records_by_kind(case_records: List[Dict[str, Any]]) -> Dict[str,
     return out
 
 
+def _validate_oracle_prediction_candidate(
+    *,
+    task_id: str,
+    scenario: str,
+    packet_sequence: List[Any],
+    prediction: OraclePredictionCandidate,
+) -> Optional[str]:
+    if prediction.task_id != task_id:
+        return f"task_id mismatch: expected '{task_id}', got '{prediction.task_id}'."
+    if prediction.scenario != scenario:
+        return f"scenario mismatch: expected '{scenario}', got '{prediction.scenario}'."
+
+    expected_ids = [int(getattr(packet, "packet_id")) for packet in packet_sequence]
+    pred_ids = [int(item.packet_id) for item in prediction.packet_predictions]
+    if len(set(pred_ids)) != len(pred_ids):
+        return "packet_predictions contains duplicate packet_id."
+
+    missing = [packet_id for packet_id in expected_ids if packet_id not in set(pred_ids)]
+    extra = [packet_id for packet_id in pred_ids if packet_id not in set(expected_ids)]
+    if missing:
+        return f"packet_predictions missing packet_id(s): {missing}."
+    if extra:
+        return f"packet_predictions has unknown packet_id(s): {extra}."
+    return None
+
+
+def _fallback_oracle_prediction(
+    *,
+    task_id: str,
+    scenario: str,
+    packet_sequence: List[Any],
+    reason: str,
+) -> OraclePredictionCandidate:
+    predictions = [
+        OraclePacketPrediction(
+            packet_id=int(getattr(packet, "packet_id")),
+            expected_outcome="unknown",
+            expected_observation="fallback_unknown",
+            rationale=reason,
+        )
+        for packet in packet_sequence
+    ]
+    return OraclePredictionCandidate(
+        task_id=task_id,
+        scenario=scenario,
+        packet_predictions=predictions,
+        assumptions=[
+            "fallback_from_orchestrator",
+            "runtime observation should be treated as final truth.",
+        ],
+    )
+
+
+def _load_runtime_observations(path: Optional[Path]) -> Dict[str, List[RuntimePacketObservation]]:
+    if path is None or not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+
+    raw_scenarios = payload.get("scenarios", payload)
+    if not isinstance(raw_scenarios, dict):
+        return {}
+
+    out: Dict[str, List[RuntimePacketObservation]] = {}
+    for scenario_name, raw_value in raw_scenarios.items():
+        if not isinstance(scenario_name, str):
+            continue
+        packets_raw: Any = raw_value
+        if isinstance(raw_value, dict):
+            packets_raw = raw_value.get("packets")
+        if not isinstance(packets_raw, list):
+            continue
+        parsed_packets: List[RuntimePacketObservation] = []
+        for item in packets_raw:
+            try:
+                parsed_packets.append(RuntimePacketObservation.model_validate(item))
+            except Exception:
+                continue
+        if parsed_packets:
+            out[scenario_name] = parsed_packets
+    return out
+
+
+def _compare_oracle_prediction_to_runtime(
+    *,
+    prediction: OraclePredictionCandidate,
+    runtime_packets: Optional[List[RuntimePacketObservation]],
+) -> Dict[str, Any]:
+    if not runtime_packets:
+        return {
+            "status": "PENDING_RUNTIME",
+            "compared_packets": 0,
+            "total_packets": len(prediction.packet_predictions),
+            "mismatches": [],
+            "packet_results": [
+                {
+                    "packet_id": item.packet_id,
+                    "expected_outcome": item.expected_outcome,
+                    "expected_rx_host": item.expected_rx_host,
+                    "actual_outcome": None,
+                    "actual_rx_host": None,
+                    "match": None,
+                    "reason": "runtime observation unavailable",
+                }
+                for item in prediction.packet_predictions
+            ],
+        }
+
+    runtime_by_packet = {int(item.packet_id): item for item in runtime_packets}
+    packet_results: List[Dict[str, Any]] = []
+    mismatches: List[Dict[str, Any]] = []
+
+    for expected in prediction.packet_predictions:
+        actual = runtime_by_packet.get(int(expected.packet_id))
+        if actual is None:
+            result = {
+                "packet_id": expected.packet_id,
+                "expected_outcome": expected.expected_outcome,
+                "expected_rx_host": expected.expected_rx_host,
+                "actual_outcome": None,
+                "actual_rx_host": None,
+                "match": False,
+                "reason": "missing_runtime_packet",
+            }
+            packet_results.append(result)
+            mismatches.append(result)
+            continue
+
+        outcome_match = (
+            expected.expected_outcome == "unknown" or expected.expected_outcome == actual.observed_outcome
+        )
+        rx_match = True
+        if expected.expected_outcome == "deliver" and expected.expected_rx_host and actual.observed_rx_host:
+            rx_match = expected.expected_rx_host.lower() == actual.observed_rx_host.lower()
+        elif expected.expected_outcome == "deliver" and expected.expected_rx_host and not actual.observed_rx_host:
+            rx_match = False
+
+        match = outcome_match and rx_match
+        reason = "matched"
+        if not outcome_match:
+            reason = "outcome_mismatch"
+        elif not rx_match:
+            reason = "rx_host_mismatch"
+
+        result = {
+            "packet_id": expected.packet_id,
+            "expected_outcome": expected.expected_outcome,
+            "expected_rx_host": expected.expected_rx_host,
+            "actual_outcome": actual.observed_outcome,
+            "actual_rx_host": actual.observed_rx_host,
+            "match": match,
+            "reason": reason,
+        }
+        packet_results.append(result)
+        if not match:
+            mismatches.append(result)
+
+    status = "MATCH" if not mismatches else "MISMATCH"
+    return {
+        "status": status,
+        "compared_packets": len(packet_results),
+        "total_packets": len(prediction.packet_predictions),
+        "mismatches": mismatches,
+        "packet_results": packet_results,
+    }
+
+
 def _apply_fixed_intake_answers(
     *,
     intent_payload: Dict[str, Any],
@@ -244,7 +418,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         raise ValueError("ModelConfig is required to run agents.")
 
     install_agno_argument_patch()
-    agent1, agent2, agent3, agent4, agent5, _team = build_agents_and_team(
+    agent1, agent2, agent3, agent4, agent5, agent6, _team = build_agents_and_team(
         model_cfg=cfg.model,
         prompts_dir=Path("prompts"),
     )
@@ -500,6 +674,17 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
     scenario_entity_status: Dict[str, str] = {}
     scenario_entity_feedback: Dict[str, str] = {}
     scenario_entity_attempts: Dict[str, int] = {}
+    scenario_oracle_prediction_status: Dict[str, str] = {}
+    scenario_oracle_prediction_feedback: Dict[str, str] = {}
+    scenario_oracle_prediction_attempts: Dict[str, int] = {}
+    scenario_oracle_comparison_status: Dict[str, str] = {}
+
+    runtime_observations_path = (
+        cfg.runtime_observations_path
+        if cfg.runtime_observations_path is not None
+        else Path("runs") / f"{run_id}_runtime_observations.json"
+    )
+    runtime_observations_by_scenario = _load_runtime_observations(runtime_observations_path)
 
     for scenario in scenario_order:
         packets_for_scenario = scenario_packets_map.get(scenario, [])
@@ -648,6 +833,124 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         scenario_entity_feedback[scenario] = last_entity_critic.feedback
         scenario_entity_attempts[scenario] = entity_attempt_count
 
+        # --- Step 5: Agent6 oracle prediction (per scenario) ---
+        last_oracle_feedback: Optional[str] = None
+        oracle_prediction: Optional[OraclePredictionCandidate] = None
+        oracle_attempt_count = 0
+        for attempt in range(1, cfg.max_retries + 1):
+            oracle_attempt_count = attempt
+            oracle_in = {
+                "attempt": attempt,
+                "task": task.model_dump(),
+                "scenario": scenario,
+                "scenario_kind": scenario_kind,
+                "user_intent": user_intent_payload,
+                "packet_sequence": [p.model_dump() for p in packets_for_scenario],
+                "entities": [e.model_dump() for e in last_entities.entities],
+                "topology": topo_summary.model_dump(),
+                "previous_feedback": last_oracle_feedback,
+            }
+            oracle_in_str = (
+                "Generate OraclePredictionCandidate STRICT JSON. Input:\n\n" + json.dumps(oracle_in, indent=2)
+            )
+            try:
+                oracle_raw = agent6.run(
+                    oracle_in_str,
+                    output_schema=OraclePredictionCandidate,
+                    session_state=session_state,
+                ).content
+            except Exception as e:
+                last_oracle_feedback = f"Agent6 API error: {_error_text(e)}"
+                recorder.record(
+                    agent_role="agent6_oracle_predictor",
+                    step=f"oracle_prediction_{scenario_slug}",
+                    round_id=attempt,
+                    model_input=oracle_in,
+                    model_output={"error": "agent_run_exception", "message": _error_text(e)},
+                )
+                continue
+            oracle_candidate = _coerce_schema_output(oracle_raw, OraclePredictionCandidate)
+            if oracle_candidate is None:
+                last_oracle_feedback = "Agent6 schema parse failed (possibly timeout/non-JSON output)."
+                recorder.record(
+                    agent_role="agent6_oracle_predictor",
+                    step=f"oracle_prediction_{scenario_slug}",
+                    round_id=attempt,
+                    model_input=oracle_in,
+                    model_output={"error": "schema_parse_failed"},
+                    extra={"raw_output": _to_recordable(oracle_raw)},
+                )
+                continue
+
+            validation_feedback = _validate_oracle_prediction_candidate(
+                task_id=task.task_id,
+                scenario=scenario,
+                packet_sequence=packets_for_scenario,
+                prediction=oracle_candidate,
+            )
+            det_oracle_critic = CriticResult(
+                status="FAIL" if validation_feedback else "PASS",
+                feedback=validation_feedback or "oracle prediction passes deterministic sanity checks.",
+            )
+            recorder.record(
+                agent_role="deterministic_validator",
+                step=f"deterministic_oracle_validation_{scenario_slug}",
+                round_id=attempt,
+                model_input={
+                    "task_id": task.task_id,
+                    "scenario": scenario,
+                    "packet_sequence": [p.model_dump() for p in packets_for_scenario],
+                    "oracle_prediction": oracle_candidate.model_dump(),
+                },
+                model_output=det_oracle_critic.model_dump(),
+            )
+            if validation_feedback:
+                last_oracle_feedback = validation_feedback
+                continue
+
+            recorder.record(
+                agent_role="agent6_oracle_predictor",
+                step=f"oracle_prediction_{scenario_slug}",
+                round_id=attempt,
+                model_input=oracle_in,
+                model_output=oracle_candidate.model_dump(),
+            )
+            oracle_prediction = oracle_candidate
+            break
+
+        if oracle_prediction is None:
+            fallback_reason = last_oracle_feedback or "Agent6 did not return a valid oracle prediction."
+            oracle_prediction = _fallback_oracle_prediction(
+                task_id=task.task_id,
+                scenario=scenario,
+                packet_sequence=packets_for_scenario,
+                reason=fallback_reason,
+            )
+            scenario_oracle_prediction_status[scenario] = "FALLBACK"
+            scenario_oracle_prediction_feedback[scenario] = fallback_reason
+            scenario_oracle_prediction_attempts[scenario] = oracle_attempt_count
+            recorder.record(
+                agent_role="agent6_oracle_predictor",
+                step=f"oracle_prediction_fallback_{scenario_slug}",
+                round_id=max(1, oracle_attempt_count),
+                model_input={"scenario": scenario, "reason": fallback_reason},
+                model_output=oracle_prediction.model_dump(),
+            )
+        else:
+            scenario_oracle_prediction_status[scenario] = "PASS"
+            scenario_oracle_prediction_feedback[scenario] = "oracle prediction generated"
+            scenario_oracle_prediction_attempts[scenario] = oracle_attempt_count
+
+        runtime_packets = runtime_observations_by_scenario.get(scenario)
+        if runtime_packets is None:
+            runtime_packets = runtime_observations_by_scenario.get(scenario_slug)
+        oracle_comparison = _compare_oracle_prediction_to_runtime(
+            prediction=oracle_prediction,
+            runtime_packets=runtime_packets,
+        )
+        oracle_comparison["runtime_observations_path"] = str(runtime_observations_path)
+        scenario_oracle_comparison_status[scenario] = str(oracle_comparison.get("status") or "PENDING_RUNTIME")
+
         scenario_outputs[scenario] = TestcaseOutput(
             program=ctx.program_name or "unknown",
             topology_ref=str(ctx.topology_path),
@@ -655,6 +958,8 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             task_id=task.task_id,
             packet_sequence=packets_for_scenario,
             entities=last_entities.entities,
+            oracle_prediction=oracle_prediction,
+            oracle_comparison=oracle_comparison,
             meta={
                 "generator": "sagefuzz_seedgen",
                 "timestamp_utc": _utc_ts(),
@@ -666,6 +971,10 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 "entities_feedback": last_entity_critic.feedback,
                 "attempts_packet_sequence": attempt_count,
                 "attempts_entities": entity_attempt_count,
+                "oracle_prediction_status": scenario_oracle_prediction_status.get(scenario),
+                "oracle_prediction_feedback": scenario_oracle_prediction_feedback.get(scenario),
+                "attempts_oracle_prediction": scenario_oracle_prediction_attempts.get(scenario, 0),
+                "oracle_comparison_status": scenario_oracle_comparison_status.get(scenario),
             },
         )
 
@@ -682,10 +991,12 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         case_files[scenario] = str(case_path)
 
     all_entities_pass = bool(scenario_entity_status) and all(s == "PASS" for s in scenario_entity_status.values())
-    final_status = "PASS" if (last_attempt.critic.status == "PASS" and all_entities_pass) else "FAIL"
+    has_oracle_mismatch = any(status == "MISMATCH" for status in scenario_oracle_comparison_status.values())
+    final_status = "PASS" if (last_attempt.critic.status == "PASS" and all_entities_pass and not has_oracle_mismatch) else "FAIL"
     final_feedback = (
         f"packet_sequence: {last_attempt.critic.status} ({last_attempt.critic.feedback}); "
-        f"scenario_entities: {scenario_entity_status}"
+        f"scenario_entities: {scenario_entity_status}; "
+        f"oracle_comparison: {scenario_oracle_comparison_status}"
     )
 
     generation_elapsed_seconds = max(0.0, time.perf_counter() - generation_start_mono)
@@ -709,6 +1020,10 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 "entities_status": scenario_entity_status.get(scenario),
                 "entities_feedback": scenario_entity_feedback.get(scenario),
                 "attempts_entities": scenario_entity_attempts.get(scenario, 0),
+                "oracle_prediction_status": scenario_oracle_prediction_status.get(scenario),
+                "oracle_prediction_feedback": scenario_oracle_prediction_feedback.get(scenario),
+                "attempts_oracle_prediction": scenario_oracle_prediction_attempts.get(scenario, 0),
+                "oracle_comparison_status": scenario_oracle_comparison_status.get(scenario),
             }
         )
     cases_by_kind = _split_case_records_by_kind(case_records)
@@ -731,6 +1046,13 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             "neutral_cases": len(cases_by_kind["neutral"]),
             "passed_case_count": sum(1 for c in case_records if c.get("entities_status") == "PASS"),
             "failed_case_count": sum(1 for c in case_records if c.get("entities_status") == "FAIL"),
+            "oracle_match_case_count": sum(1 for c in case_records if c.get("oracle_comparison_status") == "MATCH"),
+            "oracle_mismatch_case_count": sum(
+                1 for c in case_records if c.get("oracle_comparison_status") == "MISMATCH"
+            ),
+            "oracle_pending_case_count": sum(
+                1 for c in case_records if c.get("oracle_comparison_status") == "PENDING_RUNTIME"
+            ),
         },
         "timing": {
             "intent_to_testcase_seconds": generation_elapsed_seconds,
@@ -739,6 +1061,8 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         },
         "artifacts": {
             "cases_dir": str(cases_dir),
+            "runtime_observations_path": str(runtime_observations_path),
+            "runtime_observations_loaded_scenarios": sorted(runtime_observations_by_scenario.keys()),
             "cases": case_records,
             "cases_by_kind": cases_by_kind,
         },
