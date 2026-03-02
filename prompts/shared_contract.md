@@ -39,6 +39,11 @@ Critical rules:
      - each action has `order` (1-based), `operation_type`, `target`, `parameters`
      - each generated entity must appear as one `apply_table_entry` action with matching `entity_index`
      - keep sequence order deterministic and machine-consumable.
+   - Also output ordered `RuleSetCandidate.execution_sequence[]` as unified scenario timeline:
+     - include both control-plane operations and packet sends (`operation_type="send_packet"` with `packet_id`)
+     - preserve explicit global order across planes using increasing `order`
+     - every packet in packet_sequence must appear once in execution_sequence
+     - every control_plane_sequence action should be referenced by `control_plane_order`.
 
 9. Tool parameter catalog (use exact argument names):
    - `get_stateful_objects()` -> `{}`

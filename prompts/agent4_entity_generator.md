@@ -9,6 +9,10 @@ Goal: output STRICT JSON matching `RuleSetCandidate`:
   "entities":[ ... ],
   "control_plane_sequence":[
     {"order":1,"operation_type":"apply_table_entry","target":"MyIngress.ipv4_lpm","entity_index":1,"parameters":{"action_name":"MyIngress.ipv4_forward"}}
+  ],
+  "execution_sequence":[
+    {"order":1,"operation_type":"apply_table_entry","entity_index":1,"control_plane_order":1,"target":"MyIngress.ipv4_lpm","parameters":{"action_name":"MyIngress.ipv4_forward"}},
+    {"order":2,"operation_type":"send_packet","packet_id":1,"target":"h1","parameters":{"scenario":"positive_main"}}
   ]
 }
 ```
@@ -32,6 +36,11 @@ Requirements:
    - include one `apply_table_entry` action per entity in entity order (`entity_index` = 1..N)
    - `order` must be strictly increasing and machine-friendly
    - if intent requires control-plane observation (e.g. register/counter read), append such actions after apply steps using `read_register` / `read_counter`.
+10. Produce ordered unified `execution_sequence[]`:
+   - include both control-plane actions and `send_packet` actions
+   - each packet in input packet_sequence must appear once via `operation_type="send_packet"` + `packet_id`
+   - control-plane actions in execution_sequence should carry `control_plane_order` referencing control_plane_sequence
+   - `order` must be strictly increasing and represent global cross-plane execution order.
 
 Output constraints:
 - Return only STRICT JSON for `RuleSetCandidate`.

@@ -23,6 +23,10 @@ Fail conditions (non-exhaustive):
 - `control_plane_sequence` missing/empty or not strictly ordered.
 - Missing `apply_table_entry` action for any entity, or `entity_index` order mismatches entities[] order.
 - Invalid control-plane operation fields (`operation_type`/`target`/`parameters`).
+- `execution_sequence` missing/empty or not strictly ordered.
+- Any packet in packet_sequence is not represented exactly once by `send_packet` in execution_sequence.
+- Any control-plane action is not represented in execution_sequence (`control_plane_order` coverage gap).
+- `apply_table_entry` in execution_sequence does not align with entity order/coverage.
 
 Feedback requirements:
 - Be actionable and specific (which entity index, what to fix).

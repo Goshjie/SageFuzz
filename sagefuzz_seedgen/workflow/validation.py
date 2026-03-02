@@ -7,6 +7,7 @@ from sagefuzz_seedgen.runtime.program_context import ProgramContext
 from sagefuzz_seedgen.schemas import (
     ControlPlaneOperation,
     CriticResult,
+    ExecutionOperation,
     PacketSpec,
     SequenceScenarioSpec,
     TableRule,
@@ -548,3 +549,103 @@ def validate_control_plane_entities(
             )
 
     return CriticResult(status="PASS", feedback="Control-plane entities are structurally valid and aligned with packet_sequence.")
+
+
+def validate_execution_sequence(
+    *,
+    packet_sequence: List[PacketSpec],
+    entities: List[TableRule],
+    control_plane_sequence: List[ControlPlaneOperation],
+    execution_sequence: List[ExecutionOperation],
+) -> CriticResult:
+    """Validate unified cross-plane execution ordering."""
+
+    if not execution_sequence:
+        return CriticResult(status="FAIL", feedback="execution_sequence is empty.")
+
+    packet_ids = [int(packet.packet_id) for packet in packet_sequence]
+    packet_id_set = set(packet_ids)
+    cp_orders = [int(op.order) for op in control_plane_sequence]
+    cp_order_set = set(cp_orders)
+
+    last_order = 0
+    send_ids: List[int] = []
+    apply_entity_indexes: List[int] = []
+    used_cp_orders: Set[int] = set()
+
+    for step in execution_sequence:
+        if step.order <= last_order:
+            return CriticResult(
+                status="FAIL",
+                feedback=(
+                    "execution_sequence order must be strictly increasing; "
+                    f"got order {step.order} after {last_order}."
+                ),
+            )
+        last_order = step.order
+
+        if step.operation_type == "send_packet":
+            if step.packet_id is None:
+                return CriticResult(status="FAIL", feedback="send_packet operation must include packet_id.")
+            if step.packet_id not in packet_id_set:
+                return CriticResult(
+                    status="FAIL",
+                    feedback=f"send_packet references unknown packet_id={step.packet_id}.",
+                )
+            send_ids.append(step.packet_id)
+            continue
+
+        if step.operation_type == "apply_table_entry":
+            if step.entity_index is None:
+                return CriticResult(
+                    status="FAIL",
+                    feedback="apply_table_entry operation must include entity_index.",
+                )
+            if step.entity_index < 1 or step.entity_index > len(entities):
+                return CriticResult(
+                    status="FAIL",
+                    feedback=(
+                        f"apply_table_entry references out-of-range entity_index={step.entity_index}; "
+                        f"entities length={len(entities)}."
+                    ),
+                )
+            apply_entity_indexes.append(step.entity_index)
+
+        if step.control_plane_order is not None:
+            if step.control_plane_order not in cp_order_set:
+                return CriticResult(
+                    status="FAIL",
+                    feedback=(
+                        f"execution step references unknown control_plane_order={step.control_plane_order}; "
+                        f"valid orders={cp_orders}."
+                    ),
+                )
+            used_cp_orders.add(step.control_plane_order)
+
+    if send_ids != packet_ids:
+        return CriticResult(
+            status="FAIL",
+            feedback=(
+                "execution_sequence send_packet order/coverage mismatch; "
+                f"expected packet ids {packet_ids}, got {send_ids}."
+            ),
+        )
+
+    expected_entity_apply_order = list(range(1, len(entities) + 1))
+    if apply_entity_indexes != expected_entity_apply_order:
+        return CriticResult(
+            status="FAIL",
+            feedback=(
+                "execution_sequence apply_table_entry order/coverage mismatch; "
+                f"expected entity indexes {expected_entity_apply_order}, got {apply_entity_indexes}."
+            ),
+        )
+
+    if cp_order_set and used_cp_orders != cp_order_set:
+        missing = sorted(cp_order_set.difference(used_cp_orders))
+        return CriticResult(
+            status="FAIL",
+            feedback=f"execution_sequence does not reference control_plane_sequence order(s): {missing}.",
+        )
+
+    return CriticResult(status="PASS", feedback="execution_sequence is structurally valid.")

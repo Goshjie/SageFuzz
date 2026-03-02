@@ -188,12 +188,38 @@ class ControlPlaneOperation(BaseModel):
     )
 
 
+class ExecutionOperation(BaseModel):
+    order: int = Field(..., ge=1, description="1-based order in the unified scenario execution sequence.")
+    operation_type: Literal[
+        "send_packet",
+        "apply_table_entry",
+        "read_register",
+        "write_register",
+        "read_counter",
+        "custom",
+    ] = Field(..., description="Unified operation type spanning packet/control-plane actions.")
+    packet_id: Optional[int] = Field(None, description="Referenced packet id for send_packet operations.")
+    entity_index: Optional[int] = Field(None, ge=1, description="Referenced entities[] index for apply operations.")
+    control_plane_order: Optional[int] = Field(
+        None,
+        ge=1,
+        description="Referenced control_plane_sequence order for control-plane operations.",
+    )
+    target: Optional[str] = Field(None, description="Optional target resource name.")
+    parameters: Dict[str, Any] = Field(default_factory=dict, description="Operation parameters.")
+    expected_effect: Optional[str] = Field(None, description="Optional expected effect/observation.")
+
+
 class RuleSetCandidate(BaseModel):
     task_id: str
     entities: List[TableRule]
     control_plane_sequence: List[ControlPlaneOperation] = Field(
         default_factory=list,
         description="Ordered controller operations for this scenario.",
+    )
+    execution_sequence: List[ExecutionOperation] = Field(
+        default_factory=list,
+        description="Unified ordered execution sequence across control-plane actions and packet sends.",
     )
 
 
@@ -247,6 +273,7 @@ class TestcaseOutput(BaseModel):
     packet_sequence: List[PacketSpec]
     entities: List[TableRule] = Field(default_factory=list)
     control_plane_sequence: List[ControlPlaneOperation] = Field(default_factory=list)
+    execution_sequence: List[ExecutionOperation] = Field(default_factory=list)
     oracle_prediction: Optional[OraclePredictionCandidate] = None
     oracle_comparison: Dict[str, Any] = Field(default_factory=dict)
     meta: Dict[str, Any] = Field(default_factory=dict)
