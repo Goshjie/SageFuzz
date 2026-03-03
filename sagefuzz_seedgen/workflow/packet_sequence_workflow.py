@@ -334,41 +334,32 @@ def _fallback_oracle_prediction(
     )
 
 
-def _apply_fixed_intake_answers(
+def _apply_initial_intent_answer(
     *,
     intent_payload: Dict[str, Any],
-    test_intent: str,
-    topology_description: str,
+    full_intent: str,
 ) -> Dict[str, Any]:
     merged: Dict[str, Any] = dict(intent_payload)
-    if test_intent:
-        # The first fixed question is the user's core test intent; keep both fields aligned by default.
-        merged["intent_text"] = test_intent
-        merged["feature_under_test"] = test_intent
-    if topology_description:
-        merged["topology_zone_mapping"] = topology_description
+    if full_intent:
+        # Keep initial intake minimal: orchestrator captures raw complete intent text,
+        # and Agent1 decides whether clarifying questions are needed.
+        merged["intent_text"] = full_intent
     return merged
 
 
-def _collect_fixed_intake(intent_payload: Dict[str, Any]) -> Dict[str, Any]:
-    print("\n[初始化输入] 请先回答两个固定问题：")
+def _collect_initial_intent(intent_payload: Dict[str, Any]) -> Dict[str, Any]:
+    print("\n[初始化输入] 请输入本轮完整测试意图：")
     default_intent = _as_non_empty_str(intent_payload.get("intent_text")) or _as_non_empty_str(
         intent_payload.get("feature_under_test")
     )
-    default_topology = _as_non_empty_str(intent_payload.get("topology_zone_mapping"))
 
-    test_intent = _prompt_with_default(
-        "1. 请输入测试意图（要测试的功能/策略）:",
+    full_intent = _prompt_with_default(
+        "请输入完整意图（可包含功能/策略/拓扑/角色约束）:",
         default_intent,
     )
-    topology_description = _prompt_with_default(
-        "2. 请简要描述拓扑结构与安全域角色划分:",
-        default_topology,
-    )
-    return _apply_fixed_intake_answers(
+    return _apply_initial_intent_answer(
         intent_payload=intent_payload,
-        test_intent=test_intent,
-        topology_description=topology_description,
+        full_intent=full_intent,
     )
 
 
@@ -407,14 +398,14 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
     )
     # Agent1 receives its system prompt at construction time. Then we collect fixed user inputs.
 
-    # --- Step 1: Collect fixed initial intent (two mandatory bootstrap questions) ---
+    # --- Step 1: Collect initial full intent text; Agent1 handles clarification questions ---
     intent_payload: Dict[str, Any] = dict(cfg.user_intent) if isinstance(cfg.user_intent, dict) else {}
-    intent_payload = _collect_fixed_intake(intent_payload)
+    intent_payload = _collect_initial_intent(intent_payload)
     recorder.record(
         agent_role="agent1_semantic_analyzer",
-        step="fixed_intent_bootstrap",
+        step="initial_intent_intake",
         round_id=0,
-        model_input={"source": "fixed_questions"},
+        model_input={"source": "single_raw_intent"},
         model_output={"user_intent": intent_payload or None},
     )
 
@@ -508,16 +499,14 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         print("\n[Agent1 needs more intent input]")
         if not qs:
             # Safety fallback if the model returned no structured questions.
-            print("1. 请补充本次测试的意图信息：要测试的功能点、策略描述、角色通信策略、拓扑/安全域划分。")
+            print("1. 请补充本次测试的完整意图信息（功能点、策略、拓扑与角色约束）。")
             qs = [
-                # Best-effort fields to collect:
-                # Note: we keep this minimal; Agent1 should normally provide structured questions.
-                {"field": "feature_under_test", "question_zh": "请输入 feature_under_test（要测试的功能点）:", "required": True},
-                {"field": "intent_text", "question_zh": "请输入 intent_text（意图/策略描述）:", "required": True},
-                {"field": "topology_zone_mapping", "question_zh": "请描述拓扑/安全域划分（例如：h1,h2 属于 trusted；h3,h4 属于 untrusted）:", "required": True},
-                {"field": "role_policy", "question_zh": "请描述通信角色策略（例如 initiator 允许发起，responder 仅回复）:", "required": True},
-                {"field": "preferred_role_bindings", "question_zh": "可选：请输入角色到主机的映射 JSON（例如 {\"initiator\":\"h2\",\"responder\":\"h3\"}）:", "required": False},
-                {"field": "include_negative_case", "question_zh": "是否包含负例场景？[y/N]:", "required": False},
+                # Keep fallback minimal; Agent1 is the primary intent clarifier.
+                {
+                    "field": "intent_text",
+                    "question_zh": "请补充完整 intent_text（包含功能点、策略、拓扑与角色约束）:",
+                    "required": True,
+                },
             ]
 
         answers: Dict[str, Any] = {}
