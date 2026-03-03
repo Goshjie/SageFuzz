@@ -278,6 +278,28 @@ def _validate_oracle_prediction_candidate(
         return f"packet_predictions missing packet_id(s): {missing}."
     if extra:
         return f"packet_predictions has unknown packet_id(s): {extra}."
+
+    order_values = [int(item.sequence_order) for item in prediction.packet_predictions]
+    if len(set(order_values)) != len(order_values):
+        return "packet_predictions contains duplicate sequence_order."
+
+    ordered_by_step = sorted(prediction.packet_predictions, key=lambda item: int(item.sequence_order))
+    ordered_packet_ids = [int(item.packet_id) for item in ordered_by_step]
+    if ordered_packet_ids != expected_ids:
+        return (
+            "packet_predictions sequence_order does not match packet_sequence order; "
+            f"expected packet ids {expected_ids}, got {ordered_packet_ids}."
+        )
+
+    for item in prediction.packet_predictions:
+        if item.expected_outcome == "deliver" and not _as_non_empty_str(item.expected_rx_host):
+            return f"packet_id {item.packet_id}: expected_outcome=deliver requires expected_rx_host."
+        if not _as_non_empty_str(item.processing_decision):
+            return f"packet_id {item.packet_id}: processing_decision must be non-empty."
+        if not _as_non_empty_str(item.expected_switch_state_before):
+            return f"packet_id {item.packet_id}: expected_switch_state_before must be non-empty."
+        if not _as_non_empty_str(item.expected_switch_state_after):
+            return f"packet_id {item.packet_id}: expected_switch_state_after must be non-empty."
     return None
 
 
@@ -291,11 +313,15 @@ def _fallback_oracle_prediction(
     predictions = [
         OraclePacketPrediction(
             packet_id=int(getattr(packet, "packet_id")),
+            sequence_order=idx,
             expected_outcome="unknown",
+            processing_decision="unknown_due_to_fallback",
+            expected_switch_state_before="unknown",
+            expected_switch_state_after="unknown",
             expected_observation="fallback_unknown",
             rationale=reason,
         )
-        for packet in packet_sequence
+        for idx, packet in enumerate(packet_sequence, 1)
     ]
     return OraclePredictionCandidate(
         task_id=task_id,
@@ -995,7 +1021,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             oracle_prediction=oracle_prediction,
             oracle_comparison={
                 "status": "PREDICTION_ONLY",
-                "note": "Runtime observation comparison is intentionally out of scope in this stage.",
+                "note": "Prediction-only mode: oracle output includes expected_rx_host and per-packet state transitions.",
             },
             meta={
                 "generator": "sagefuzz_seedgen",

@@ -45,7 +45,17 @@ Critical rules:
      - every packet in packet_sequence must appear once in execution_sequence
      - every control_plane_sequence action should be referenced by `control_plane_order`.
 
-9. Tool parameter catalog (use exact argument names):
+9. Oracle prediction contract:
+   - For `OraclePredictionCandidate.packet_predictions[]`, output one prediction per packet.
+   - `sequence_order` must be 1..N and align with scenario packet order.
+   - If `expected_outcome="deliver"`, `expected_rx_host` must be non-empty.
+   - For each packet, provide:
+     - `processing_decision`
+     - `expected_switch_state_before`
+     - `expected_switch_state_after`
+   - Keep state summaries concise, machine-readable, and evidence-based.
+
+10. Tool parameter catalog (use exact argument names):
    - `get_stateful_objects()` -> `{}`
    - `get_parser_paths()` -> `{}`
    - `get_parser_transitions()` -> `{}`

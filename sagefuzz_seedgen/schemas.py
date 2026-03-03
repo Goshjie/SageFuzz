@@ -225,9 +225,24 @@ class RuleSetCandidate(BaseModel):
 
 class OraclePacketPrediction(BaseModel):
     packet_id: int
+    sequence_order: int = Field(..., ge=1, description="1-based order of this packet in scenario prediction timeline.")
     expected_outcome: Literal["deliver", "drop", "unknown"]
     expected_rx_host: Optional[str] = None
     expected_rx_role: Optional[str] = None
+    processing_decision: str = Field(..., description="How the switch is expected to process this packet.")
+    expected_switch_state_before: str = Field(
+        ...,
+        description="Expected switch state snapshot/summary before this packet is processed.",
+    )
+    expected_switch_state_after: str = Field(
+        ...,
+        description="Expected switch state snapshot/summary after this packet is processed.",
+    )
+    matched_entity_index: Optional[int] = Field(
+        None,
+        ge=1,
+        description="Optional 1-based entities[] index expected to handle this packet.",
+    )
     expected_observation: Optional[str] = None
     rationale: str
 
