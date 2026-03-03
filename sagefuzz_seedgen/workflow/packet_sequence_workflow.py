@@ -410,9 +410,11 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
     )
 
     # --- Step 2: Semantic analyzer produces a task spec, or asks model-driven follow-up questions ---
-    max_intent_rounds = 3
+    max_intent_rounds = 5
     task: TaskSpec | None = None
     agent1_feedback: Optional[str] = None
+    last_task_candidate: Optional[TaskSpec] = None
+    last_task_review_feedback: Optional[str] = None
     for _round in range(1, max_intent_rounds + 1):
         a1_in = {
             "user_intent": intent_payload or None,
@@ -444,6 +446,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         )
 
         if a1_out.kind == "task" and a1_out.task is not None:
+            last_task_candidate = a1_out.task
             # Agent-based semantic completeness check for TaskSpec before Agent2 generation.
             task_review_in = {
                 "mode": "task_contract_review",
@@ -491,6 +494,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             if task_review is not None and task_review.status == "FAIL":
                 print(f"\n[WARN] Agent3 认为 TaskSpec 语义不完整：{task_review.feedback}")
                 agent1_feedback = task_review.feedback
+                last_task_review_feedback = task_review.feedback
                 continue
 
             task = a1_out.task
@@ -535,6 +539,22 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
 
         # Merge answers into existing intent (if any)
         intent_payload.update(answers)
+
+    if task is None and last_task_candidate is not None:
+        # Fallback: avoid hard stop when semantic reviewer remains unstable across rounds.
+        task = last_task_candidate
+        fallback_feedback = last_task_review_feedback or "TaskSpec review did not converge within max rounds."
+        print(
+            "\n[WARN] Agent1/Agent3 task review未在轮次内收敛，"
+            "将使用最后一个TaskSpec继续执行。"
+        )
+        recorder.record(
+            agent_role="deterministic_validator",
+            step="task_contract_review_fallback_accept",
+            round_id=max_intent_rounds,
+            model_input={"task": task.model_dump()},
+            model_output={"status": "PASS_WITH_FALLBACK", "feedback": fallback_feedback},
+        )
 
     if task is None:
         raise RuntimeError("Unable to obtain sufficient user intent to generate a task.")
