@@ -188,7 +188,7 @@ control MyIngress(inout headers hdr,
 
     apply {
         if (hdr.ipv4.isValid()){
-            ipv4_lpm.apply();
+            
             if (hdr.tcp.isValid()){
                 direction = 0; // default
                 if (check_ports.apply().hit) {
@@ -206,6 +206,7 @@ control MyIngress(inout headers hdr,
                             bloom_filter_1.write(reg_pos_one, 1);
                             bloom_filter_2.write(reg_pos_two, 1);
                         }
+                        ipv4_lpm.apply();
                     }
                     // Packet comes from outside
                     else if (direction == 1){
@@ -215,6 +216,8 @@ control MyIngress(inout headers hdr,
                         // only allow flow to pass if both entries are set
                         if (reg_val_one != 1 || reg_val_two != 1){
                             drop();
+                        }else {
+                            ipv4_lpm.apply();
                         }
                     }
                 }
