@@ -21,6 +21,10 @@ Critical rules:
    - When `task.require_positive_and_negative=true`, packet_sequence must include both positive and negative scenarios.
    - When `task.require_positive_and_negative=false`, generate only the scenario(s) explicitly listed in contract (do not auto-add positive/negative pair).
    - Scenario outputs are separated by scenario: do not mix positive/negative scenario packets or entities into one testcase file.
+   - Scenario completeness must match intent semantics:
+     - If intent claims a path/role pair "can communicate" (or equivalent bidirectional/reply-allowed meaning), positive scenario MUST prove communication, not just initiation.
+     - At minimum, positive scenario should include one initiator->responder packet and one responder->initiator packet in the same scenario.
+     - For explicitly stateful intents, include enough ordered packets to demonstrate state establishment before relying on reverse-direction success.
    - Respect `task.generation_mode`:
      - `packet_and_entities`: packet generation + control-plane entity generation are both required.
      - `packet_only`: only packet_sequence + oracle are required; control-plane entities may be empty and Agent4/5 may be skipped by orchestrator.
@@ -56,6 +60,8 @@ Critical rules:
    - For `OraclePredictionCandidate.packet_predictions[]`, output one prediction per packet.
    - `sequence_order` must be 1..N and align with scenario packet order.
    - If `expected_outcome="deliver"`, `expected_rx_host` must be non-empty.
+   - If `expected_outcome="drop"`, `expected_rx_host` should be null/empty and decision/observation should explicitly indicate drop.
+   - Oracle output must be intent-faithful: predict per-packet receiver/drop behavior that directly reflects the user intent + contract semantics, not generic guesses.
    - For each packet, provide:
      - `processing_decision`
      - `expected_switch_state_before`

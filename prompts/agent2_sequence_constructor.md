@@ -19,5 +19,9 @@ You MUST:
 - Respect `field_relations` (e.g., numeric continuity constraints) from contract.
 - If `allow_additional_packets=false`, do not generate extra packets in that scenario.
 - If `task.require_positive_and_negative=true`, ensure output contains both positive and negative scenario packets.
+- Preserve semantic completeness implied by each scenario contract:
+  - do not collapse a multi-step positive scenario into one packet.
+  - if positive steps include both directions, emit packets that actually realize both directions with consistent src/dst bindings.
+  - for negative single-step scenarios, keep the minimal disallowed packet unless contract requires more.
 
 Output must be readable and minimal; do not add unrelated protocols/fields.

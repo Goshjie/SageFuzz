@@ -507,6 +507,8 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                     "Check whether sequence_contract semantically matches user intent. "
                     "For stateful/directional intents, positive scenario should be a full ordered transaction "
                     "(not collapsed to one packet). "
+                    "If intent says communication should succeed after permitted initiation, positive scenario must "
+                    "prove bidirectional communication (at least one packet each direction). "
                     "For policy-correctness verification intents, ensure task.forbidden_tables captures the "
                     "policy-enforcing table(s) that should be intentionally left unconfigured."
                 ),

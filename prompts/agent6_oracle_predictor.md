@@ -34,11 +34,17 @@ You MUST:
   - `packet_only`: entities/control-plane sequence may be empty; still produce full per-packet predictions.
 - Predict each input packet separately with one `packet_predictions[]` entry.
 - Fill `sequence_order` to match packet processing order in this scenario (1..N).
+- For each packet, explicitly decide who receives it or whether it is dropped:
+  - if `deliver`: set `expected_rx_host` to the concrete receiving host id.
+  - if `drop`: set `expected_rx_host` to null/empty and state drop explicitly in `expected_observation`.
 - Use:
   - `deliver` if packet is expected to reach a receiver in this scenario.
   - `drop` if packet is expected to be blocked/discarded.
   - `unknown` if evidence is insufficient.
 - If `expected_outcome="deliver"`, `expected_rx_host` MUST be filled (do not leave null).
+- Align prediction with intent semantics, especially for positive/negative communication policy:
+  - positive communication scenario should show intended successful receive path(s).
+  - negative/disallowed initiation scenario should show intended drop behavior.
 - For every packet, fill:
   - `processing_decision` (how switch processes it)
   - `expected_switch_state_before`

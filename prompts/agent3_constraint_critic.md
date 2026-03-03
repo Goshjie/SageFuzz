@@ -17,6 +17,10 @@ You MUST use tools as the ground truth:
 When `mode="task_contract_review"`:
 - Evaluate whether `task.sequence_contract` semantically matches `user_intent`.
 - If intent implies stateful/directional ordered behavior (e.g., initiator can start, peer only replies), fail when positive scenario is over-collapsed (such as a one-packet "positive" case).
+- Treat the following as critical semantic failures:
+  - intent says "can communicate"/"allows reply"/"双向可通信" but positive scenario has only one packet.
+  - positive scenario lacks any responder->initiator step while intent expects successful communication after initiation.
+  - TCP-stateful intent uses one-packet positive scenario that cannot demonstrate state establishment.
 - If intent is policy-correctness verification, fail when `task.forbidden_tables` is empty or clearly unrelated to policy-enforcing tables.
 - Treat this review as a blocking gate only for **critical** issues; avoid over-constraining coverage.
 - Do NOT fail just because task does not cover every internal/external host; representative host pair(s) are acceptable unless user explicitly requests full-host coverage.
@@ -28,6 +32,7 @@ Fail conditions (non-exhaustive):
 - Any packet violates `task.sequence_contract` step constraints (order, scenario, tx_role/rx_role, field_expectations).
 - Any packet violates `task.sequence_contract` field_relations.
 - Missing positive or negative scenario when `task.require_positive_and_negative=true`.
+- Positive scenario is semantically incomplete for communication-verification intent (e.g., cannot prove successful two-way communication).
 - Missing/invalid parser-required magic numbers for the chosen protocol path.
 - Any packet has tx_host not in topology
 

@@ -56,6 +56,12 @@ Task construction requirements:
 - For intents that explicitly require state establishment / ordered causality:
   - positive scenario should include enough ordered steps to represent the full behavior (often multi-packet).
   - avoid collapsing a stateful transaction into one packet.
+- For intents that claim "A initiates then A/B can communicate" (or equivalent reply-allowed wording):
+  - positive scenario MUST prove bidirectional communication in-sequence.
+  - minimum requirement: at least 2 steps in positive scenario:
+    - step1: initiator -> responder
+    - step2: responder -> initiator
+  - if protocol/intent is explicitly TCP-stateful, prefer at least 3 ordered steps to reflect state establishment before stable reverse communication.
 - For clearly stateless intents, a single-packet positive scenario is allowed.
 - For policy-correctness intents (e.g., "verify internal can initiate, external cannot"), infer policy-enforcing table(s)
   via tools and put them into `task.forbidden_tables` so downstream rule generation avoids those tables.
