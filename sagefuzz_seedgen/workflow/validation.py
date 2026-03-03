@@ -408,6 +408,19 @@ def _collect_table_match_types(table_keys: Any) -> Set[str]:
     return out
 
 
+def _is_forbidden_table(table_name: str, forbidden_tables: List[str]) -> bool:
+    normalized = table_name.strip().lower()
+    for raw in forbidden_tables:
+        token = str(raw).strip().lower()
+        if not token:
+            continue
+        if normalized == token:
+            return True
+        if normalized.endswith(f".{token}"):
+            return True
+    return False
+
+
 def validate_control_plane_entities(
     *,
     ctx: ProgramContext,
@@ -421,10 +434,21 @@ def validate_control_plane_entities(
     if not entities:
         return CriticResult(status="FAIL", feedback="entities is empty; at least one table rule is required.")
 
+    forbidden_tables = [str(item).strip() for item in task.forbidden_tables if str(item).strip()]
+
     packet_dst_ips = _extract_packet_destination_ips(packet_sequence)
     covered_ips: Set[str] = set()
 
     for idx, rule in enumerate(entities, 1):
+        if forbidden_tables and _is_forbidden_table(rule.table_name, forbidden_tables):
+            return CriticResult(
+                status="FAIL",
+                feedback=(
+                    f"entity[{idx}] uses forbidden table '{rule.table_name}'. "
+                    f"Forbidden tables: {forbidden_tables}."
+                ),
+            )
+
         table = ctx.tables_by_name.get(rule.table_name)
         if not isinstance(table, dict):
             return CriticResult(status="FAIL", feedback=f"entity[{idx}]: unknown table '{rule.table_name}'.")

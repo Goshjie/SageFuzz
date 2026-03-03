@@ -16,13 +16,14 @@ class TestEntityValidation(unittest.TestCase):
             topology_path=Path("P4/firewall/pod-topo/topology.json"),
         )
 
-    def _task(self) -> TaskSpec:
+    def _task(self, forbidden_tables: list[str] | None = None) -> TaskSpec:
         return TaskSpec(
             task_id="T",
             task_description="",
             feature_under_test="firewall",
             role_bindings={"initiator": "h1", "responder": "h3"},
             sequence_contract=[],
+            forbidden_tables=forbidden_tables or [],
         )
 
     def _packets(self) -> list[PacketSpec]:
@@ -326,6 +327,25 @@ class TestEntityValidation(unittest.TestCase):
         )
         self.assertEqual(res.status, "FAIL")
         self.assertIn("send_packet order/coverage mismatch", res.feedback)
+
+    def test_forbidden_table_fails(self) -> None:
+        entities = [
+            TableRule(
+                table_name="MyIngress.check_ports",
+                match_type="exact",
+                match_keys={"meta.allowed_port": 1},
+                action_name="NoAction",
+                action_data={},
+            )
+        ]
+        res = validate_control_plane_entities(
+            ctx=self.ctx,
+            task=self._task(forbidden_tables=["check_ports"]),
+            packet_sequence=[self._packets()[0]],
+            entities=entities,
+        )
+        self.assertEqual(res.status, "FAIL")
+        self.assertIn("forbidden table", res.feedback)
 
 
 if __name__ == "__main__":

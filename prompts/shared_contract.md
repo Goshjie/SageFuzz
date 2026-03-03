@@ -19,6 +19,7 @@ Critical rules:
    - Do not hardcode protocol choreography (e.g. TCP three-way handshake) unless required by `sequence_contract`.
    - If contract and packet_sequence conflict, contract is the source of truth.
    - When `task.require_positive_and_negative=true`, packet_sequence must include both positive and negative scenarios.
+   - When `task.require_positive_and_negative=false`, generate only the scenario(s) explicitly listed in contract (do not auto-add positive/negative pair).
    - Scenario outputs are separated by scenario: do not mix positive/negative scenario packets or entities into one testcase file.
 
 6. Intent-driven rule:
@@ -36,6 +37,7 @@ Critical rules:
    - `match_keys` field names should follow table key expressions (e.g. `hdr.ipv4.dstAddr`).
    - `match_type` must align with table key definition; ternary/range/optional entries require `priority`.
    - Rules should still align with packet_sequence endpoints (destination IP coverage).
+   - Respect `TaskSpec.forbidden_tables`: never generate entities for forbidden tables (short/full table names).
    - Also output ordered `RuleSetCandidate.control_plane_sequence[]` controller actions:
      - each action has `order` (1-based), `operation_type`, `target`, `parameters`
      - each generated entity must appear as one `apply_table_entry` action with matching `entity_index`

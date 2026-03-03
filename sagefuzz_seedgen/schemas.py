@@ -36,6 +36,13 @@ class UserIntent(BaseModel):
     include_negative_case: Optional[bool] = Field(
         None, description="Whether to include one negative scenario in generated packet sequence."
     )
+    forbidden_tables: Optional[List[str]] = Field(
+        None,
+        description=(
+            "Optional table names that must NOT be generated in entities. "
+            "Example: ['check_ports'] or ['MyIngress.check_ports']."
+        ),
+    )
 
 
 class UserQuestion(BaseModel):
@@ -48,6 +55,7 @@ class UserQuestion(BaseModel):
         "role_policy",
         "preferred_role_bindings",
         "include_negative_case",
+        "forbidden_tables",
     ]
     question_zh: str = Field(..., description="Question to the user in Simplified Chinese.")
     required: bool = True
@@ -79,6 +87,13 @@ class TaskSpec(BaseModel):
     require_positive_and_negative: bool = Field(
         True,
         description="If true, sequence_contract must include and generate both required positive and negative scenarios.",
+    )
+    forbidden_tables: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Table names that entity generation must avoid. "
+            "Supports full names (e.g., MyIngress.check_ports) and short names (e.g., check_ports)."
+        ),
     )
 
 

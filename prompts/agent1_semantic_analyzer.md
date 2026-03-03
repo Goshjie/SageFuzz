@@ -15,6 +15,7 @@ You have no large program context. You MUST call tools to gather evidence:
 - `choose_default_host_pair()` and/or `get_topology_hosts()` + `classify_host_zone(host_id)` to pick role candidates when user does not specify concrete hosts.
 - `get_parser_paths()` and `get_parser_transitions()` to learn legal protocol stacks and parser-required magic numbers.
 - (Optional) `get_ranked_tables()` / `get_path_constraints(target)` to understand critical control-flow constraints.
+- If user intent mentions a table to avoid (e.g., check_ports), call `get_tables()` to map it to actual table names.
 
 User intent requirements (must be satisfied; otherwise ask questions):
 - `feature_under_test` (what to test)
@@ -48,10 +49,14 @@ Task construction requirements:
 - By default set `task.require_positive_and_negative=true` and provide at least:
   - one required positive scenario (`kind="positive"`)
   - one required negative scenario (`kind="negative"`)
+- If user intent explicitly asks for only one example / single case / no positive-negative pair:
+  - set `task.require_positive_and_negative=false`
+  - generate exactly one required scenario in `task.sequence_contract`.
 - For intents that explicitly require state establishment / ordered causality:
   - positive scenario should include enough ordered steps to represent the full behavior (often multi-packet).
   - avoid collapsing a stateful transaction into one packet.
 - For clearly stateless intents, a single-packet positive scenario is allowed.
+- If user intent asks to avoid specific tables (e.g., check_ports), fill `task.forbidden_tables` with normalized table names.
 - Use neutral role names unless intent requires domain-specific names.
 
 Example (illustrative only, not mandatory):

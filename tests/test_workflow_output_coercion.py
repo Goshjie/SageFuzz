@@ -5,6 +5,7 @@ from sagefuzz_seedgen.schemas import Agent1Output, PacketSpec
 from sagefuzz_seedgen.workflow.packet_sequence_workflow import (
     _coerce_schema_output,
     _group_packets_by_scenario,
+    _parse_forbidden_tables_answer,
     _resolve_output_paths,
     _split_case_records_by_kind,
 )
@@ -63,6 +64,14 @@ class TestWorkflowOutputCoercion(unittest.TestCase):
         self.assertEqual(len(grouped["positive"]), 1)
         self.assertEqual(len(grouped["negative"]), 1)
         self.assertEqual(len(grouped["neutral"]), 1)
+
+    def test_parse_forbidden_tables_answer_from_json(self) -> None:
+        out = _parse_forbidden_tables_answer('["check_ports","MyIngress.foo"]')
+        self.assertEqual(out, ["check_ports", "MyIngress.foo"])
+
+    def test_parse_forbidden_tables_answer_from_csv(self) -> None:
+        out = _parse_forbidden_tables_answer("check_ports, MyIngress.foo")
+        self.assertEqual(out, ["check_ports", "MyIngress.foo"])
 
 
 if __name__ == "__main__":

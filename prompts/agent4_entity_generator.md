@@ -32,11 +32,12 @@ Requirements:
 6. If table keys use ternary/range/optional match, set an integer `priority`.
 7. Generated entities should cover destination IPs used in this scenario's packet_sequence.
 8. Do not merge rules for other scenarios in this output. Each scenario is emitted as a separate testcase file.
-9. Produce ordered `control_plane_sequence[]` for controller actions:
+9. Respect `task.forbidden_tables`: do NOT generate entries for those tables (including short-name matches like `check_ports`).
+10. Produce ordered `control_plane_sequence[]` for controller actions:
    - include one `apply_table_entry` action per entity in entity order (`entity_index` = 1..N)
    - `order` must be strictly increasing and machine-friendly
    - if intent requires control-plane observation (e.g. register/counter read), append such actions after apply steps using `read_register` / `read_counter`.
-10. Produce ordered unified `execution_sequence[]`:
+11. Produce ordered unified `execution_sequence[]`:
    - include both control-plane actions and `send_packet` actions
    - each packet in input packet_sequence must appear once via `operation_type="send_packet"` + `packet_id`
    - control-plane actions in execution_sequence should carry `control_plane_order` referencing control_plane_sequence
