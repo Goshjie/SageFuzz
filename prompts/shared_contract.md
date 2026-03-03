@@ -24,6 +24,7 @@ Critical rules:
 
 6. Intent-driven rule:
    - Orchestrator only collects one raw complete intent input; Agent1 owns clarification follow-ups.
+   - `TaskSpec.forbidden_tables` is inferred by Agent1 from intent + tool evidence (not user-provided table names).
    - Do not assume endpoint roles unless the user intent provides them or you can justify them via tool evidence.
    - If intent is missing required pieces, ask questions rather than guessing.
    - If you ask the user questions, the questions must be in Chinese (简体中文).

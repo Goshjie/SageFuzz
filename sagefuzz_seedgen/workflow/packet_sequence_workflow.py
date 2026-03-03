@@ -143,23 +143,6 @@ def _parse_role_bindings_answer(value: str) -> Optional[Dict[str, str]]:
     return out or None
 
 
-def _parse_forbidden_tables_answer(value: str) -> Optional[List[str]]:
-    text = value.strip()
-    if not text:
-        return None
-    try:
-        parsed = json.loads(text)
-    except Exception:
-        parsed = None
-    if isinstance(parsed, list):
-        out = [str(item).strip() for item in parsed if str(item).strip()]
-        return out or None
-    # Fallback: comma-separated list
-    parts = [item.strip() for item in text.split(",")]
-    out = [item for item in parts if item]
-    return out or None
-
-
 def _scenario_name(raw: Optional[str]) -> str:
     text = (raw or "").strip()
     return text or "default"
@@ -469,7 +452,9 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 "review_hint": (
                     "Check whether sequence_contract semantically matches user intent. "
                     "For stateful/directional intents, positive scenario should be a full ordered transaction "
-                    "(not collapsed to one packet)."
+                    "(not collapsed to one packet). "
+                    "For policy-correctness verification intents, ensure task.forbidden_tables captures the "
+                    "policy-enforcing table(s) that should be intentionally left unconfigured."
                 ),
             }
             task_review_in_str = (
@@ -545,9 +530,6 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             elif field == "preferred_role_bindings":
                 parsed_bindings = _parse_role_bindings_answer(ans)
                 answers[field] = parsed_bindings if parsed_bindings is not None else ans
-            elif field == "forbidden_tables":
-                parsed_tables = _parse_forbidden_tables_answer(ans)
-                answers[field] = parsed_tables if parsed_tables is not None else ans
             else:
                 answers[field] = ans
 

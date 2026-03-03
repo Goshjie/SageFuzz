@@ -14,8 +14,7 @@ You have no large program context. You MUST call tools to gather evidence:
 - `get_stateful_objects()` to see if there are registers/counters (stateful intent).
 - `choose_default_host_pair()` and/or `get_topology_hosts()` + `classify_host_zone(host_id)` to pick role candidates when user does not specify concrete hosts.
 - `get_parser_paths()` and `get_parser_transitions()` to learn legal protocol stacks and parser-required magic numbers.
-- (Optional) `get_ranked_tables()` / `get_path_constraints(target)` to understand critical control-flow constraints.
-- If user intent mentions a table to avoid (e.g., check_ports), call `get_tables()` to map it to actual table names.
+- `get_tables()` / `get_ranked_tables()` / `get_path_constraints(target)` to identify policy-enforcing tables and critical control-flow constraints.
 
 User intent requirements (must be satisfied; otherwise ask questions):
 - `feature_under_test` (what to test)
@@ -56,7 +55,9 @@ Task construction requirements:
   - positive scenario should include enough ordered steps to represent the full behavior (often multi-packet).
   - avoid collapsing a stateful transaction into one packet.
 - For clearly stateless intents, a single-packet positive scenario is allowed.
-- If user intent asks to avoid specific tables (e.g., check_ports), fill `task.forbidden_tables` with normalized table names.
+- For policy-correctness intents (e.g., "verify internal can initiate, external cannot"), infer policy-enforcing table(s)
+  via tools and put them into `task.forbidden_tables` so downstream rule generation avoids those tables.
+- Do NOT ask user to provide table names; infer them yourself from tool evidence.
 - Use neutral role names unless intent requires domain-specific names.
 
 Example (illustrative only, not mandatory):

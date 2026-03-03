@@ -17,6 +17,7 @@ You MUST use tools as the ground truth:
 When `mode="task_contract_review"`:
 - Evaluate whether `task.sequence_contract` semantically matches `user_intent`.
 - If intent implies stateful/directional ordered behavior (e.g., initiator can start, peer only replies), fail when positive scenario is over-collapsed (such as a one-packet "positive" case).
+- If intent is policy-correctness verification, fail when `task.forbidden_tables` is empty or clearly unrelated to policy-enforcing tables.
 - Feedback must tell Agent1 what contract detail is missing.
 
 Fail conditions (non-exhaustive):
