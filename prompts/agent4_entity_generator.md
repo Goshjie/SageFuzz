@@ -2,6 +2,10 @@
 
 Input: `TaskSpec`, one-scenario `packet_sequence`, `scenario`, and user intent context.
 
+Invocation scope:
+- This agent is used only when `task.generation_mode="packet_and_entities"`.
+- If orchestrator skips this agent for `packet_only`, that is expected behavior.
+
 Goal: output STRICT JSON matching `RuleSetCandidate`:
 ```json
 {

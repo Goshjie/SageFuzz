@@ -1,10 +1,12 @@
 import unittest
 from pathlib import Path
 
-from sagefuzz_seedgen.schemas import Agent1Output, PacketSpec
+from sagefuzz_seedgen.schemas import Agent1Output, PacketSpec, TaskSpec
 from sagefuzz_seedgen.workflow.packet_sequence_workflow import (
     _coerce_schema_output,
     _group_packets_by_scenario,
+    _normalize_test_objective,
+    _resolve_generation_mode,
     _resolve_output_paths,
     _split_case_records_by_kind,
 )
@@ -63,6 +65,28 @@ class TestWorkflowOutputCoercion(unittest.TestCase):
         self.assertEqual(len(grouped["positive"]), 1)
         self.assertEqual(len(grouped["negative"]), 1)
         self.assertEqual(len(grouped["neutral"]), 1)
+
+    def test_normalize_test_objective(self) -> None:
+        self.assertEqual(_normalize_test_objective("1"), "data_plane_behavior")
+        self.assertEqual(_normalize_test_objective("控制平面规则"), "control_plane_rules")
+        self.assertEqual(_normalize_test_objective("dp"), "data_plane_behavior")
+        self.assertIsNone(_normalize_test_objective("unknown-token"))
+
+    def test_resolve_generation_mode(self) -> None:
+        task = TaskSpec(task_id="t1", task_description="d", feature_under_test="f", role_bindings={})
+        self.assertEqual(
+            _resolve_generation_mode(intent_payload={"test_objective": "2"}, task=task),
+            "packet_only",
+        )
+        self.assertEqual(
+            _resolve_generation_mode(intent_payload={"test_objective": "数据平面行为"}, task=task),
+            "packet_and_entities",
+        )
+        task_packet_only = task.model_copy(update={"generation_mode": "packet_only"})
+        self.assertEqual(
+            _resolve_generation_mode(intent_payload={}, task=task_packet_only),
+            "packet_only",
+        )
 
 
 if __name__ == "__main__":

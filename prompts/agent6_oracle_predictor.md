@@ -29,6 +29,9 @@ Goal: output STRICT JSON matching `OraclePredictionCandidate`:
 You MUST:
 - Be generic: do not hardcode firewall-only logic.
 - Use `task.role_bindings` + `task.sequence_contract` + topology/tool evidence as the source of truth.
+- Handle both generation modes:
+  - `packet_and_entities`: entities/control-plane sequence are expected to be present.
+  - `packet_only`: entities/control-plane sequence may be empty; still produce full per-packet predictions.
 - Predict each input packet separately with one `packet_predictions[]` entry.
 - Fill `sequence_order` to match packet processing order in this scenario (1..N).
 - Use:

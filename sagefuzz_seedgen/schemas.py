@@ -36,6 +36,14 @@ class UserIntent(BaseModel):
     include_negative_case: Optional[bool] = Field(
         None, description="Whether to include one negative scenario in generated packet sequence."
     )
+    test_objective: Optional[Literal["data_plane_behavior", "control_plane_rules"]] = Field(
+        None,
+        description=(
+            "User-selected test objective. "
+            "'data_plane_behavior' means generate packets+entities; "
+            "'control_plane_rules' means packet-only generation (skip entity generation)."
+        ),
+    )
 
 
 class UserQuestion(BaseModel):
@@ -48,6 +56,7 @@ class UserQuestion(BaseModel):
         "role_policy",
         "preferred_role_bindings",
         "include_negative_case",
+        "test_objective",
     ]
     question_zh: str = Field(..., description="Question to the user in Simplified Chinese.")
     required: bool = True
@@ -79,6 +88,14 @@ class TaskSpec(BaseModel):
     require_positive_and_negative: bool = Field(
         True,
         description="If true, sequence_contract must include and generate both required positive and negative scenarios.",
+    )
+    generation_mode: Literal["packet_and_entities", "packet_only"] = Field(
+        "packet_and_entities",
+        description=(
+            "Execution mode for downstream generation. "
+            "'packet_and_entities': run Agent4/5 and generate control-plane rules; "
+            "'packet_only': skip Agent4/5 and generate only packet_sequence + oracle."
+        ),
     )
     forbidden_tables: List[str] = Field(
         default_factory=list,

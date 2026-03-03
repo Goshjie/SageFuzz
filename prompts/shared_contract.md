@@ -21,6 +21,9 @@ Critical rules:
    - When `task.require_positive_and_negative=true`, packet_sequence must include both positive and negative scenarios.
    - When `task.require_positive_and_negative=false`, generate only the scenario(s) explicitly listed in contract (do not auto-add positive/negative pair).
    - Scenario outputs are separated by scenario: do not mix positive/negative scenario packets or entities into one testcase file.
+   - Respect `task.generation_mode`:
+     - `packet_and_entities`: packet generation + control-plane entity generation are both required.
+     - `packet_only`: only packet_sequence + oracle are required; control-plane entities may be empty and Agent4/5 may be skipped by orchestrator.
 
 6. Intent-driven rule:
    - Orchestrator only collects one raw complete intent input; Agent1 owns clarification follow-ups.

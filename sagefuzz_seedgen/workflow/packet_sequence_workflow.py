@@ -143,6 +143,33 @@ def _parse_role_bindings_answer(value: str) -> Optional[Dict[str, str]]:
     return out or None
 
 
+def _normalize_test_objective(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    token = value.strip().lower()
+    if not token:
+        return None
+    mapping = {
+        "1": "data_plane_behavior",
+        "data": "data_plane_behavior",
+        "dp": "data_plane_behavior",
+        "data_plane": "data_plane_behavior",
+        "data_plane_behavior": "data_plane_behavior",
+        "2": "control_plane_rules",
+        "cp": "control_plane_rules",
+        "control": "control_plane_rules",
+        "control_plane": "control_plane_rules",
+        "control_plane_rules": "control_plane_rules",
+    }
+    if token in mapping:
+        return mapping[token]
+    if "数据平面" in token:
+        return "data_plane_behavior"
+    if "控制平面" in token:
+        return "control_plane_rules"
+    return None
+
+
 def _scenario_name(raw: Optional[str]) -> str:
     text = (raw or "").strip()
     return text or "default"
@@ -338,12 +365,15 @@ def _apply_initial_intent_answer(
     *,
     intent_payload: Dict[str, Any],
     full_intent: str,
+    test_objective: Optional[str],
 ) -> Dict[str, Any]:
     merged: Dict[str, Any] = dict(intent_payload)
     if full_intent:
         # Keep initial intake minimal: orchestrator captures raw complete intent text,
         # and Agent1 decides whether clarifying questions are needed.
         merged["intent_text"] = full_intent
+    if test_objective:
+        merged["test_objective"] = test_objective
     return merged
 
 
@@ -357,10 +387,31 @@ def _collect_initial_intent(intent_payload: Dict[str, Any]) -> Dict[str, Any]:
         "请输入完整意图（可包含功能/策略/拓扑/角色约束）:",
         default_intent,
     )
+    default_objective = _normalize_test_objective(str(intent_payload.get("test_objective") or ""))
+    objective_hint = "数据平面行为(1, 默认，生成包+规则) / 控制平面规则(2，仅生成包)"
+    objective_raw = _prompt_with_default(
+        f"请选择测试目标 [{objective_hint}]:",
+        "1" if default_objective is None else ("1" if default_objective == "data_plane_behavior" else "2"),
+    )
+    test_objective = _normalize_test_objective(objective_raw)
+    if test_objective is None:
+        # Conservative fallback to current default behavior.
+        test_objective = "data_plane_behavior"
     return _apply_initial_intent_answer(
         intent_payload=intent_payload,
         full_intent=full_intent,
+        test_objective=test_objective,
     )
+
+
+def _resolve_generation_mode(*, intent_payload: Dict[str, Any], task: TaskSpec) -> str:
+    selected = _normalize_test_objective(str(intent_payload.get("test_objective") or ""))
+    if selected == "control_plane_rules":
+        return "packet_only"
+    if selected == "data_plane_behavior":
+        return "packet_and_entities"
+    # Fallback to task-provided value if user selection is unavailable.
+    return task.generation_mode
 
 
 def run_packet_sequence_generation(cfg: RunConfig) -> Path:
@@ -573,6 +624,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         }
     if not task.sequence_contract:
         raise RuntimeError("TaskSpec.sequence_contract is empty. Agent1 must define scenario contracts.")
+    task.generation_mode = _resolve_generation_mode(intent_payload=intent_payload, task=task)
 
     generation_start_ts = _utc_ts()
     generation_start_mono = time.perf_counter()
@@ -720,6 +772,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
     scenario_oracle_prediction_status: Dict[str, str] = {}
     scenario_oracle_prediction_feedback: Dict[str, str] = {}
     scenario_oracle_prediction_attempts: Dict[str, int] = {}
+    entity_generation_required = task.generation_mode == "packet_and_entities"
 
     for scenario in scenario_order:
         packets_for_scenario = scenario_packets_map.get(scenario, [])
@@ -735,180 +788,212 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         last_entity_critic: Optional[CriticResult] = None
         entity_attempt_count = 0
 
-        for attempt in range(1, cfg.max_retries + 1):
-            entity_attempt_count = attempt
-            entity_gen_in = {
-                "attempt": attempt,
-                "scenario": scenario,
-                "scenario_kind": scenario_kind,
-                "task": task.model_dump(),
-                "user_intent": user_intent_payload,
-                "packet_sequence": [p.model_dump() for p in packets_for_scenario],
-                "previous_feedback": last_entity_feedback,
-            }
-            entity_gen_in_str = "Generate RuleSetCandidate STRICT JSON. Input:\n\n" + json.dumps(entity_gen_in, indent=2)
-            try:
-                entity_raw = agent4.run(
-                    entity_gen_in_str,
-                    output_schema=RuleSetCandidate,
-                    session_state=session_state,
-                ).content
-            except Exception as e:
-                last_entity_feedback = f"Agent4 API error: {_error_text(e)}"
+        if entity_generation_required:
+            for attempt in range(1, cfg.max_retries + 1):
+                entity_attempt_count = attempt
+                entity_gen_in = {
+                    "attempt": attempt,
+                    "scenario": scenario,
+                    "scenario_kind": scenario_kind,
+                    "task": task.model_dump(),
+                    "user_intent": user_intent_payload,
+                    "packet_sequence": [p.model_dump() for p in packets_for_scenario],
+                    "previous_feedback": last_entity_feedback,
+                }
+                entity_gen_in_str = "Generate RuleSetCandidate STRICT JSON. Input:\n\n" + json.dumps(entity_gen_in, indent=2)
+                try:
+                    entity_raw = agent4.run(
+                        entity_gen_in_str,
+                        output_schema=RuleSetCandidate,
+                        session_state=session_state,
+                    ).content
+                except Exception as e:
+                    last_entity_feedback = f"Agent4 API error: {_error_text(e)}"
+                    recorder.record(
+                        agent_role="agent4_entity_generator",
+                        step=f"entity_candidate_{scenario_slug}",
+                        round_id=attempt,
+                        model_input=entity_gen_in,
+                        model_output={"error": "agent_run_exception", "message": _error_text(e)},
+                    )
+                    continue
+                entity_candidate = _coerce_schema_output(entity_raw, RuleSetCandidate)
+                if entity_candidate is None:
+                    last_entity_feedback = "Agent4 schema parse failed (possibly timeout/non-JSON output)."
+                    recorder.record(
+                        agent_role="agent4_entity_generator",
+                        step=f"entity_candidate_{scenario_slug}",
+                        round_id=attempt,
+                        model_input=entity_gen_in,
+                        model_output={"error": "schema_parse_failed"},
+                        extra={"raw_output": _to_recordable(entity_raw)},
+                    )
+                    continue
                 recorder.record(
                     agent_role="agent4_entity_generator",
                     step=f"entity_candidate_{scenario_slug}",
                     round_id=attempt,
                     model_input=entity_gen_in,
-                    model_output={"error": "agent_run_exception", "message": _error_text(e)},
+                    model_output=entity_candidate.model_dump(),
                 )
-                continue
-            entity_candidate = _coerce_schema_output(entity_raw, RuleSetCandidate)
-            if entity_candidate is None:
-                last_entity_feedback = "Agent4 schema parse failed (possibly timeout/non-JSON output)."
+                normalized_cp_sequence = _normalize_control_plane_sequence(entity_candidate)
+                normalized_execution_sequence = _normalize_execution_sequence(
+                    candidate=entity_candidate,
+                    packet_sequence=packets_for_scenario,
+                    control_plane_sequence=normalized_cp_sequence,
+                )
+
+                entity_critic_in = {
+                    "scenario": scenario,
+                    "scenario_kind": scenario_kind,
+                    "task": task.model_dump(),
+                    "user_intent": user_intent_payload,
+                    "packet_sequence": [p.model_dump() for p in packets_for_scenario],
+                    "rule_set_candidate": {
+                        **entity_candidate.model_dump(),
+                        "control_plane_sequence": [op.model_dump() for op in normalized_cp_sequence],
+                        "execution_sequence": [op.model_dump() for op in normalized_execution_sequence],
+                    },
+                }
+                entity_critic_in_str = (
+                    "Evaluate control-plane entities and return CriticResult STRICT JSON:\n\n"
+                    + json.dumps(entity_critic_in, indent=2)
+                )
+                try:
+                    entity_critic_raw = agent5.run(
+                        entity_critic_in_str,
+                        output_schema=CriticResult,
+                        session_state=session_state,
+                    ).content
+                except Exception as e:
+                    last_entity_feedback = f"Agent5 API error: {_error_text(e)}"
+                    recorder.record(
+                        agent_role="agent5_entity_critic",
+                        step=f"entity_critic_result_{scenario_slug}",
+                        round_id=attempt,
+                        model_input=entity_critic_in,
+                        model_output={"error": "agent_run_exception", "message": _error_text(e)},
+                    )
+                    continue
+                llm_entity_critic = _coerce_schema_output(entity_critic_raw, CriticResult)
+                if llm_entity_critic is None:
+                    last_entity_feedback = "Agent5 schema parse failed (possibly timeout/non-JSON output)."
+                    recorder.record(
+                        agent_role="agent5_entity_critic",
+                        step=f"entity_critic_result_{scenario_slug}",
+                        round_id=attempt,
+                        model_input=entity_critic_in,
+                        model_output={"error": "schema_parse_failed"},
+                        extra={"raw_output": _to_recordable(entity_critic_raw)},
+                    )
+                    continue
                 recorder.record(
-                    agent_role="agent4_entity_generator",
-                    step=f"entity_candidate_{scenario_slug}",
+                    agent_role="agent5_entity_critic",
+                    step=f"entity_critic_result_{scenario_slug}",
                     round_id=attempt,
-                    model_input=entity_gen_in,
-                    model_output={"error": "schema_parse_failed"},
-                    extra={"raw_output": _to_recordable(entity_raw)},
+                    model_input=entity_critic_in,
+                    model_output=llm_entity_critic.model_dump(),
                 )
-                continue
-            recorder.record(
-                agent_role="agent4_entity_generator",
-                step=f"entity_candidate_{scenario_slug}",
-                round_id=attempt,
-                model_input=entity_gen_in,
-                model_output=entity_candidate.model_dump(),
-            )
-            normalized_cp_sequence = _normalize_control_plane_sequence(entity_candidate)
+
+                det_entity_critic = validate_control_plane_entities(
+                    ctx=ctx,
+                    task=task,
+                    packet_sequence=packets_for_scenario,
+                    entities=entity_candidate.entities,
+                    control_plane_sequence=normalized_cp_sequence,
+                )
+                det_execution_critic = validate_execution_sequence(
+                    packet_sequence=packets_for_scenario,
+                    entities=entity_candidate.entities,
+                    control_plane_sequence=normalized_cp_sequence,
+                    execution_sequence=normalized_execution_sequence,
+                )
+                recorder.record(
+                    agent_role="deterministic_validator",
+                    step=f"deterministic_entity_validation_{scenario_slug}",
+                    round_id=attempt,
+                    model_input={
+                        "scenario": scenario,
+                        "task": task.model_dump(),
+                        "packet_sequence": [p.model_dump() for p in packets_for_scenario],
+                        "entities": [e.model_dump() for e in entity_candidate.entities],
+                        "control_plane_sequence": [op.model_dump() for op in normalized_cp_sequence],
+                        "execution_sequence": [op.model_dump() for op in normalized_execution_sequence],
+                    },
+                    model_output=det_entity_critic.model_dump(),
+                )
+                recorder.record(
+                    agent_role="deterministic_validator",
+                    step=f"deterministic_execution_validation_{scenario_slug}",
+                    round_id=attempt,
+                    model_input={
+                        "scenario": scenario,
+                        "task": task.model_dump(),
+                        "packet_sequence": [p.model_dump() for p in packets_for_scenario],
+                        "entities": [e.model_dump() for e in entity_candidate.entities],
+                        "control_plane_sequence": [op.model_dump() for op in normalized_cp_sequence],
+                        "execution_sequence": [op.model_dump() for op in normalized_execution_sequence],
+                    },
+                    model_output=det_execution_critic.model_dump(),
+                )
+
+                final_entity_critic = llm_entity_critic
+                if det_entity_critic.status == "FAIL":
+                    final_entity_critic = det_entity_critic
+                elif det_execution_critic.status == "FAIL":
+                    final_entity_critic = det_execution_critic
+                last_entities = entity_candidate.model_copy(
+                    update={
+                        "control_plane_sequence": normalized_cp_sequence,
+                        "execution_sequence": normalized_execution_sequence,
+                    }
+                )
+                last_entity_critic = final_entity_critic
+                last_entity_feedback = final_entity_critic.feedback
+
+                if final_entity_critic.status == "PASS":
+                    break
+
+            if last_entities is None or last_entity_critic is None:
+                raise RuntimeError(
+                    f"No entity generation attempt succeeded for scenario '{scenario}' after {cfg.max_retries} retries. "
+                    f"Last feedback: {last_entity_feedback}"
+                )
+
+            scenario_entity_status[scenario] = last_entity_critic.status
+            scenario_entity_feedback[scenario] = last_entity_critic.feedback
+            scenario_entity_attempts[scenario] = entity_attempt_count
+        else:
+            # packet_only mode: skip Agent4/5 while preserving a deterministic
+            # execution timeline for packet replay and oracle prediction.
+            empty_candidate = RuleSetCandidate(task_id=task.task_id, entities=[])
+            normalized_cp_sequence: List[ControlPlaneOperation] = []
             normalized_execution_sequence = _normalize_execution_sequence(
-                candidate=entity_candidate,
+                candidate=empty_candidate,
                 packet_sequence=packets_for_scenario,
                 control_plane_sequence=normalized_cp_sequence,
             )
-
-            entity_critic_in = {
-                "scenario": scenario,
-                "scenario_kind": scenario_kind,
-                "task": task.model_dump(),
-                "user_intent": user_intent_payload,
-                "packet_sequence": [p.model_dump() for p in packets_for_scenario],
-                "rule_set_candidate": {
-                    **entity_candidate.model_dump(),
-                    "control_plane_sequence": [op.model_dump() for op in normalized_cp_sequence],
-                    "execution_sequence": [op.model_dump() for op in normalized_execution_sequence],
-                },
-            }
-            entity_critic_in_str = (
-                "Evaluate control-plane entities and return CriticResult STRICT JSON:\n\n"
-                + json.dumps(entity_critic_in, indent=2)
-            )
-            try:
-                entity_critic_raw = agent5.run(
-                    entity_critic_in_str,
-                    output_schema=CriticResult,
-                    session_state=session_state,
-                ).content
-            except Exception as e:
-                last_entity_feedback = f"Agent5 API error: {_error_text(e)}"
-                recorder.record(
-                    agent_role="agent5_entity_critic",
-                    step=f"entity_critic_result_{scenario_slug}",
-                    round_id=attempt,
-                    model_input=entity_critic_in,
-                    model_output={"error": "agent_run_exception", "message": _error_text(e)},
-                )
-                continue
-            llm_entity_critic = _coerce_schema_output(entity_critic_raw, CriticResult)
-            if llm_entity_critic is None:
-                last_entity_feedback = "Agent5 schema parse failed (possibly timeout/non-JSON output)."
-                recorder.record(
-                    agent_role="agent5_entity_critic",
-                    step=f"entity_critic_result_{scenario_slug}",
-                    round_id=attempt,
-                    model_input=entity_critic_in,
-                    model_output={"error": "schema_parse_failed"},
-                    extra={"raw_output": _to_recordable(entity_critic_raw)},
-                )
-                continue
-            recorder.record(
-                agent_role="agent5_entity_critic",
-                step=f"entity_critic_result_{scenario_slug}",
-                round_id=attempt,
-                model_input=entity_critic_in,
-                model_output=llm_entity_critic.model_dump(),
-            )
-
-            det_entity_critic = validate_control_plane_entities(
-                ctx=ctx,
-                task=task,
-                packet_sequence=packets_for_scenario,
-                entities=entity_candidate.entities,
-                control_plane_sequence=normalized_cp_sequence,
-            )
-            det_execution_critic = validate_execution_sequence(
-                packet_sequence=packets_for_scenario,
-                entities=entity_candidate.entities,
-                control_plane_sequence=normalized_cp_sequence,
-                execution_sequence=normalized_execution_sequence,
-            )
-            recorder.record(
-                agent_role="deterministic_validator",
-                step=f"deterministic_entity_validation_{scenario_slug}",
-                round_id=attempt,
-                model_input={
-                    "scenario": scenario,
-                    "task": task.model_dump(),
-                    "packet_sequence": [p.model_dump() for p in packets_for_scenario],
-                    "entities": [e.model_dump() for e in entity_candidate.entities],
-                    "control_plane_sequence": [op.model_dump() for op in normalized_cp_sequence],
-                    "execution_sequence": [op.model_dump() for op in normalized_execution_sequence],
-                },
-                model_output=det_entity_critic.model_dump(),
-            )
-            recorder.record(
-                agent_role="deterministic_validator",
-                step=f"deterministic_execution_validation_{scenario_slug}",
-                round_id=attempt,
-                model_input={
-                    "scenario": scenario,
-                    "task": task.model_dump(),
-                    "packet_sequence": [p.model_dump() for p in packets_for_scenario],
-                    "entities": [e.model_dump() for e in entity_candidate.entities],
-                    "control_plane_sequence": [op.model_dump() for op in normalized_cp_sequence],
-                    "execution_sequence": [op.model_dump() for op in normalized_execution_sequence],
-                },
-                model_output=det_execution_critic.model_dump(),
-            )
-
-            final_entity_critic = llm_entity_critic
-            if det_entity_critic.status == "FAIL":
-                final_entity_critic = det_entity_critic
-            elif det_execution_critic.status == "FAIL":
-                final_entity_critic = det_execution_critic
-            last_entities = entity_candidate.model_copy(
+            last_entities = empty_candidate.model_copy(
                 update={
                     "control_plane_sequence": normalized_cp_sequence,
                     "execution_sequence": normalized_execution_sequence,
                 }
             )
-            last_entity_critic = final_entity_critic
-            last_entity_feedback = final_entity_critic.feedback
-
-            if final_entity_critic.status == "PASS":
-                break
-
-        if last_entities is None or last_entity_critic is None:
-            raise RuntimeError(
-                f"No entity generation attempt succeeded for scenario '{scenario}' after {cfg.max_retries} retries. "
-                f"Last feedback: {last_entity_feedback}"
+            skip_feedback = "Skipped by generation_mode=packet_only."
+            scenario_entity_status[scenario] = "SKIPPED"
+            scenario_entity_feedback[scenario] = skip_feedback
+            scenario_entity_attempts[scenario] = 0
+            recorder.record(
+                agent_role="deterministic_validator",
+                step=f"entity_generation_skipped_{scenario_slug}",
+                round_id=0,
+                model_input={
+                    "scenario": scenario,
+                    "task_generation_mode": task.generation_mode,
+                    "packet_count": len(packets_for_scenario),
+                },
+                model_output={"status": "SKIPPED", "feedback": skip_feedback},
             )
-
-        scenario_entity_status[scenario] = last_entity_critic.status
-        scenario_entity_feedback[scenario] = last_entity_critic.feedback
-        scenario_entity_attempts[scenario] = entity_attempt_count
 
         # --- Step 5: Agent6 oracle prediction (per scenario) ---
         last_oracle_feedback: Optional[str] = None
@@ -1037,14 +1122,15 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             meta={
                 "generator": "sagefuzz_seedgen",
                 "timestamp_utc": _utc_ts(),
+                "generation_mode": task.generation_mode,
                 "scenario": scenario,
                 "scenario_kind": scenario_kind,
                 "packet_sequence_status": last_attempt.critic.status,
                 "packet_sequence_feedback": last_attempt.critic.feedback,
-                "entities_status": last_entity_critic.status,
-                "entities_feedback": last_entity_critic.feedback,
+                "entities_status": scenario_entity_status.get(scenario),
+                "entities_feedback": scenario_entity_feedback.get(scenario),
                 "attempts_packet_sequence": attempt_count,
-                "attempts_entities": entity_attempt_count,
+                "attempts_entities": scenario_entity_attempts.get(scenario, 0),
                 "control_plane_operation_count": len(last_entities.control_plane_sequence),
                 "execution_operation_count": len(last_entities.execution_sequence),
                 "oracle_prediction_status": scenario_oracle_prediction_status.get(scenario),
@@ -1065,8 +1151,10 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         _write_json_file(case_path, scenario_output.model_dump())
         case_files[scenario] = str(case_path)
 
-    all_entities_pass = bool(scenario_entity_status) and all(s == "PASS" for s in scenario_entity_status.values())
-    final_status = "PASS" if (last_attempt.critic.status == "PASS" and all_entities_pass) else "FAIL"
+    all_entities_ok = bool(scenario_entity_status) and all(
+        s in {"PASS", "SKIPPED"} for s in scenario_entity_status.values()
+    )
+    final_status = "PASS" if (last_attempt.critic.status == "PASS" and all_entities_ok) else "FAIL"
     final_feedback = (
         f"packet_sequence: {last_attempt.critic.status} ({last_attempt.critic.feedback}); "
         f"scenario_entities: {scenario_entity_status}; "
@@ -1110,6 +1198,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             "program": ctx.program_name or "unknown",
             "topology_ref": str(ctx.topology_path),
             "task_id": task.task_id,
+            "generation_mode": task.generation_mode,
             "final_status": final_status,
             "final_feedback": final_feedback,
             "packet_sequence_status": last_attempt.critic.status,
@@ -1121,6 +1210,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             "neutral_cases": len(cases_by_kind["neutral"]),
             "passed_case_count": sum(1 for c in case_records if c.get("entities_status") == "PASS"),
             "failed_case_count": sum(1 for c in case_records if c.get("entities_status") == "FAIL"),
+            "skipped_case_count": sum(1 for c in case_records if c.get("entities_status") == "SKIPPED"),
             "total_control_plane_operations": sum(int(c.get("control_plane_operation_count") or 0) for c in case_records),
             "total_execution_operations": sum(int(c.get("execution_operation_count") or 0) for c in case_records),
             "oracle_prediction_pass_case_count": sum(
