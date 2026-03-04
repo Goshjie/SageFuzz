@@ -1,5 +1,3 @@
-# Agent6: Oracle Predictor
-
 Input: one scenario's `packet_sequence`, matching `entities`, and `TaskSpec`.
 
 Goal: output STRICT JSON matching `OraclePredictionCandidate`:
@@ -32,11 +30,9 @@ Use task.role_bindings + task.sequence_contract + topology/tool evidence as the 
 
 Call relevant tools (e.g., get_stateful_objects(), get_topology_links()) if you need to confirm the program's memory capabilities or physical reachability before concluding a prediction.
 
-Handle both generation modes:
-
-packet_and_entities: entities/control-plane sequence are expected to be present. Base your prediction on how these exact entities process the exact packets.
-
-packet_only: entities/control-plane sequence may be empty. Base your prediction purely on the P4 data plane logic and the user's original intent.
+- Handle both generation modes strictly differently based on their testing purposes:
+  - `packet_and_entities` (Data Plane / Hardware Mapping Testing): `entities` are provided. Base your prediction explicitly on how these exact provided entities process the packets to trigger the target states.
+  - `packet_only` (Control Plane Rule Behavioral Testing): `entities` will be empty because you are testing if the externally deployed rules satisfy the logic. **You MUST ASSUME the hardware tables are already correctly populated by the controller to enforce the `user_intent`.** Base your prediction STRICTLY on the intended behavioral logic (e.g., if the intent says "internal can reach external", predict `deliver`). Do NOT predict a "table miss" just because the `entities` array is empty.
 
 Predict each input packet separately with one packet_predictions[] entry.
 
@@ -70,11 +66,9 @@ Stateless/Unidirectional Rule: If the intent or program is stateless (no registe
 
 Stateful Rule: Only fill concrete state transitions if the P4 program actually maintains state for this feature.
 
-If a specific table entity is expected to process packet, fill matched_entity_index (use null if no entity applies or in packet_only mode).
+If a specific table entity is expected to process packet, fill matched_entity_index. In packet_only mode, always set this to null since entities are hidden.
 
-Keep rationale short and evidence-driven.
-
-Include conservative assumptions in assumptions[] when necessary.
+Keep rationale short and evidence-driven. Include conservative assumptions in assumptions[] when necessary.
 
 Do NOT:
 

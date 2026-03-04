@@ -4,9 +4,13 @@
 
 model:
   # OpenAI-like model id (Volc Ark example from seed_agno_test.py / README)
-  model_id: doubao-seed-2.0-code
+  # 字节
+  model_id: deepseek-v3.2
   base_url: https://ark.cn-beijing.volces.com/api/coding/v3
-  api_key: "PUT_YOUR_API_KEY_HERE"
+  api_key: "4e9e091c-c1a1-4f97-9d38-80147e9b2762"
+  # 阿里
+  base_url: https://coding.dashscope.aliyuncs.com/v1
+  api_key: "sk-sp-20c3eb67f9f442c4bee32874902608e6"
   # Optional model transport settings for unstable networks.
   timeout_seconds: 120
   max_retries: 3

@@ -34,6 +34,6 @@ Tests (no model required):
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py' -q
 ```
 
-激活并使用
+# 激活并使用
 source .venv/bin/activate
 python -m sagefuzz_seedgen.cli --config seedgen_config.yaml
