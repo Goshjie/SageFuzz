@@ -108,6 +108,20 @@ class TestAgnoArgumentPatch(unittest.TestCase):
         )
         self.assertEqual(resolved, "get_topology_hosts")
 
+    def test_resolve_tool_name_strips_tool_call_wrapper(self) -> None:
+        resolved = _resolve_tool_name(
+            name="<tool_call>classify_host_zone",
+            functions={"classify_host_zone": _DummyFunction({"type": "object", "properties": {}, "required": []})},
+        )
+        self.assertEqual(resolved, "classify_host_zone")
+
+    def test_resolve_tool_name_strips_namespace_prefix(self) -> None:
+        resolved = _resolve_tool_name(
+            name="functions.get_host_info",
+            functions={"get_host_info": _DummyFunction({"type": "object", "properties": {}, "required": []})},
+        )
+        self.assertEqual(resolved, "get_host_info")
+
     def test_resolve_tool_name_keeps_unknown_name(self) -> None:
         resolved = _resolve_tool_name(
             name="non_existing_tool",

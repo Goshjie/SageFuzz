@@ -39,6 +39,40 @@ def _to_lookup_key(name: str) -> str:
     return "".join(ch for ch in name.lower() if ch.isalnum())
 
 
+def _strip_tool_name_noise(name: str) -> str:
+    cleaned = name.strip().strip("`\"'")
+    if not cleaned:
+        return cleaned
+
+    # Remove common XML-like wrappers occasionally emitted by providers.
+    cleaned = re.sub(r"</?\s*tool_call\s*>", "", cleaned, flags=re.IGNORECASE).strip()
+
+    # Remove common namespace/prefix drift.
+    prefixes = (
+        "functions.",
+        "function.",
+        "tools.",
+        "tool.",
+        "tool:",
+        "call:",
+    )
+    changed = True
+    while changed and cleaned:
+        changed = False
+        lower = cleaned.lower()
+        for prefix in prefixes:
+            if lower.startswith(prefix):
+                cleaned = cleaned[len(prefix) :].strip()
+                changed = True
+                break
+
+    # Keep only the function-looking token if extra text leaked in.
+    token_match = re.search(r"([A-Za-z_][A-Za-z0-9_]*)$", cleaned)
+    if token_match:
+        return token_match.group(1)
+    return cleaned
+
+
 def _camel_to_snake(name: str) -> str:
     # Convert common camelCase/PascalCase drift into snake_case.
     step1 = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
@@ -47,6 +81,10 @@ def _camel_to_snake(name: str) -> str:
 
 def _resolve_tool_name(name: str, functions: Optional[Dict[str, Any]]) -> str:
     if not isinstance(name, str) or not name.strip():
+        return name
+
+    name = _strip_tool_name_noise(name)
+    if not name:
         return name
 
     if not isinstance(functions, dict) or not functions:

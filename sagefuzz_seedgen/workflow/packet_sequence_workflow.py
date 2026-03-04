@@ -477,12 +477,32 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             "If missing required information, ask questions.\n\n"
             + json.dumps(a1_in, indent=2)
         )
-        a1_raw = agent1.run(
-            a1_in_str,
-            output_schema=Agent1Output,
-            session_state=session_state,
-        ).content
-        a1_out = _coerce_schema_output(a1_raw, Agent1Output)
+        a1_raw: Any = None
+        a1_raw_retry: Any = None
+        a1_primary_error: Optional[str] = None
+        a1_retry_error: Optional[str] = None
+        try:
+            a1_raw = agent1.run(
+                a1_in_str,
+                output_schema=Agent1Output,
+                session_state=session_state,
+            ).content
+            a1_out = _coerce_schema_output(a1_raw, Agent1Output)
+        except Exception as e:
+            a1_out = None
+            a1_primary_error = _error_text(e)
+
+        if a1_out is None:
+            # Retry once without schema forcing; then coerce locally from raw content.
+            try:
+                a1_raw_retry = agent1.run(
+                    a1_in_str,
+                    session_state=session_state,
+                ).content
+                a1_out = _coerce_schema_output(a1_raw_retry, Agent1Output)
+            except Exception as e:
+                a1_retry_error = _error_text(e)
+
         if a1_out is None:
             # Safety: do not crash when provider emits malformed schema output.
             print("\n[WARN] Agent1 输出解析失败，切换到兜底问题收集。")
@@ -493,7 +513,12 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             round_id=_round,
             model_input=a1_in,
             model_output=_to_recordable(a1_out),
-            extra={"raw_output": _to_recordable(a1_raw)},
+            extra={
+                "raw_output": _to_recordable(a1_raw),
+                "raw_output_retry": _to_recordable(a1_raw_retry),
+                "primary_error": a1_primary_error,
+                "retry_error": a1_retry_error,
+            },
         )
 
         if a1_out.kind == "task" and a1_out.task is not None:
