@@ -73,8 +73,6 @@ Generated entities should cover the specific endpoint characteristics (e.g., des
 
 Do not merge rules for other scenarios in this output. Each scenario is emitted as a separate testcase file.
 
-Respect task.forbidden_tables: do NOT generate entries for those tables (including short-name matches like access_control or firewall_rules).
-
 Produce ordered control_plane_sequence[] for controller actions:
 
 include one apply_table_entry action per entity in entity order (entity_index = 1..N)

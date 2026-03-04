@@ -34,7 +34,6 @@ Critical rules:
 
 6. Intent-driven rule:
    - Orchestrator only collects one raw complete intent input; Agent1 owns clarification follow-ups.
-   - `TaskSpec.forbidden_tables` is inferred by Agent1 from intent + tool evidence (not user-provided table names).
    - Do not assume endpoint roles unless the user intent provides them or you can justify them via tool evidence.
    - If intent is missing required pieces, ask questions rather than guessing.
    - If you ask the user questions, the questions must be in Chinese (简体中文).
@@ -50,7 +49,6 @@ Critical rules:
    - `match_keys` field names should follow table key expressions (e.g. `hdr.ipv4.dstAddr`).
    - `match_type` must align with table key definition; ternary/range/optional entries require `priority`.
    - Rules should still align with packet_sequence endpoints (destination IP coverage).
-   - Respect `TaskSpec.forbidden_tables`: never generate entities for forbidden tables (short/full table names).
    - Also output ordered `RuleSetCandidate.control_plane_sequence[]` controller actions:
      - each action has `order` (1-based), `operation_type`, `target`, `parameters`
      - each generated entity must appear as one `apply_table_entry` action with matching `entity_index`

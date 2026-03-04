@@ -20,7 +20,6 @@ When `mode="task_contract_review"`:
   - For explicitly STATEFUL or BIDIRECTIONAL intents (e.g., "allows reply", "双向可通信"): FAIL if the positive scenario has only one packet or lacks the reverse-flow (responder->initiator) step.
   - For protocols requiring state establishment (e.g., TCP handshakes or custom stateful authentications): FAIL if the positive scenario uses a one-packet sequence that cannot logically demonstrate state transition.
   - For explicitly STATELESS or UNIDIRECTIONAL intents (e.g., L3 routing, simple forwarding): FAIL if the scenario over-complicates the test by forcing unnecessary reverse-flow packets that the user did not request.
-- If intent is policy-correctness verification, fail when `task.forbidden_tables` is empty or clearly unrelated to policy-enforcing tables.
 - Treat this review as a blocking gate only for **critical** issues; avoid over-constraining coverage.
 - Do NOT fail just because task does not cover every internal/external host; representative host pair(s) are acceptable unless user explicitly requests full-host coverage.
 - For forbidden table inference, one primary policy-enforcing table is sufficient; do NOT require forbidding all potentially related tables.

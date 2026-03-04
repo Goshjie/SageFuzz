@@ -61,7 +61,6 @@ Task construction requirements:
     - Minimum requirement: at least 2 steps (Step 1: forward-flow/initiator -> responder; Step 2: reverse-flow/responder -> initiator).
     - If the protocol requires a complex handshake (e.g., TCP), generate enough ordered steps to represent the full state establishment before stable reverse communication. Do NOT collapse a stateful transaction into one packet.
 - Every protocol stack used in `steps[]` must be parser-valid according to tool evidence (`get_parser_paths`, `get_parser_transitions`). Invalid stacks like `["Ethernet", "", "TCP"]` are not allowed.
-- For policy-correctness intents (e.g., "verify Subnet A can reach Subnet B, but C cannot" or "internal can initiate, external cannot"), infer policy-enforcing table(s) via tools and put them into `task.forbidden_tables` so downstream rule generation avoids those tables.
 - Set `task.generation_mode` dynamically based on the user intent's physical objective:
   - If intent implies testing the P4 compiler backend, hardware mapping, triggering state coverage, or providing a fully self-contained testcase -> set to `packet_and_entities`.
   - If intent implies behavioral verification of externally deployed control-plane rules, or purely using packets to check if the network logic is satisfied -> set to `packet_only`.

@@ -108,6 +108,10 @@ def _error_text(err: Exception) -> str:
     return msg or err.__class__.__name__
 
 
+def _progress(message: str) -> None:
+    print(f"[进度] {message}", flush=True)
+
+
 def _as_non_empty_str(value: Any) -> Optional[str]:
     if not isinstance(value, str):
         return None
@@ -466,6 +470,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
     agent1_feedback: Optional[str] = None
     last_task_candidate: Optional[TaskSpec] = None
     last_task_review_feedback: Optional[str] = None
+    _progress("已接收意图，开始Agent1语义分析。")
     for _round in range(1, max_intent_rounds + 1):
         a1_in = {
             "user_intent": intent_payload or None,
@@ -481,6 +486,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         a1_raw_retry: Any = None
         a1_primary_error: Optional[str] = None
         a1_retry_error: Optional[str] = None
+        _progress(f"Agent1 正在执行语义分析（第{_round}/{max_intent_rounds}轮）。")
         try:
             a1_raw = agent1.run(
                 a1_in_str,
@@ -494,6 +500,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
 
         if a1_out is None:
             # Retry once without schema forcing; then coerce locally from raw content.
+            _progress("Agent1 首次输出解析失败，正在进行原始输出重试。")
             try:
                 a1_raw_retry = agent1.run(
                     a1_in_str,
@@ -523,6 +530,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
 
         if a1_out.kind == "task" and a1_out.task is not None:
             last_task_candidate = a1_out.task
+            _progress("Agent1 已生成TaskSpec，转交Agent3进行语义完整性审查。")
             # Agent-based semantic completeness check for TaskSpec before Agent2 generation.
             task_review_in = {
                 "mode": "task_contract_review",
@@ -543,6 +551,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 + json.dumps(task_review_in, indent=2)
             )
             try:
+                _progress(f"Agent3 正在审查TaskSpec语义（第{_round}/{max_intent_rounds}轮）。")
                 task_review_raw = agent3.run(
                     task_review_in_str,
                     output_schema=CriticResult,
@@ -571,15 +580,18 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             )
             if task_review is not None and task_review.status == "FAIL":
                 print(f"\n[WARN] Agent3 认为 TaskSpec 语义不完整：{task_review.feedback}")
+                _progress("Agent3 审查未通过，已将反馈回传Agent1修订。")
                 agent1_feedback = task_review.feedback
                 last_task_review_feedback = task_review.feedback
                 continue
 
+            _progress("TaskSpec 语义审查通过，进入生成阶段。")
             task = a1_out.task
             break
 
         # Ask user and build a UserIntent object
         qs = a1_out.questions or []
+        _progress("Agent1 需要补充信息，正在等待用户输入。")
         print("\n[Agent1 needs more intent input]")
         if not qs:
             # Safety fallback if the model returned no structured questions.
@@ -661,6 +673,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
     attempt_count: int = 0
 
     # --- Step 3: Generate packet_sequence with critic loop ---
+    _progress("开始Agent2/Agent3循环生成并审查packet_sequence。")
     for attempt in range(1, cfg.max_retries + 1):
         attempt_count = attempt
         gen_in = {
@@ -673,6 +686,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             "Generate PacketSequenceCandidate STRICT JSON. Input:\n\n" + json.dumps(gen_in, indent=2)
         )
         try:
+            _progress(f"Agent2 正在生成packet_sequence（第{attempt}/{cfg.max_retries}轮）。")
             cand_raw = agent2.run(
                 gen_in_str,
                 output_schema=PacketSequenceCandidate,
@@ -680,6 +694,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             ).content
         except Exception as e:
             last_feedback = f"Agent2 API error: {_error_text(e)}"
+            _progress(f"Agent2 调用失败：{last_feedback}")
             recorder.record(
                 agent_role="agent2_sequence_constructor",
                 step="packet_sequence_candidate",
@@ -691,6 +706,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         candidate = _coerce_schema_output(cand_raw, PacketSequenceCandidate)
         if candidate is None:
             last_feedback = "Agent2 schema parse failed (possibly timeout/non-JSON output)."
+            _progress(f"Agent2 输出解析失败：{last_feedback}")
             recorder.record(
                 agent_role="agent2_sequence_constructor",
                 step="packet_sequence_candidate",
@@ -715,6 +731,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         }
         critic_in_str = "Evaluate candidate and return CriticResult STRICT JSON:\n\n" + json.dumps(critic_in, indent=2)
         try:
+            _progress(f"Agent3 正在审查packet_sequence（第{attempt}/{cfg.max_retries}轮）。")
             critic_raw = agent3.run(
                 critic_in_str,
                 output_schema=CriticResult,
@@ -722,6 +739,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             ).content
         except Exception as e:
             last_feedback = f"Agent3 API error: {_error_text(e)}"
+            _progress(f"Agent3 调用失败：{last_feedback}")
             recorder.record(
                 agent_role="agent3_constraint_critic",
                 step="critic_result",
@@ -733,6 +751,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         llm_critic = _coerce_schema_output(critic_raw, CriticResult)
         if llm_critic is None:
             last_feedback = "Agent3 schema parse failed (possibly timeout/non-JSON output)."
+            _progress(f"Agent3 输出解析失败：{last_feedback}")
             recorder.record(
                 agent_role="agent3_constraint_critic",
                 step="critic_result",
@@ -768,7 +787,9 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         last_feedback = attempt_result.critic.feedback
 
         if attempt_result.critic.status == "PASS":
+            _progress("packet_sequence 已通过审查与确定性校验。")
             break
+        _progress(f"packet_sequence 未通过，准备重试。原因：{last_feedback}")
 
     if last_attempt is None:
         raise RuntimeError(
@@ -800,6 +821,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
     scenario_oracle_prediction_feedback: Dict[str, str] = {}
     scenario_oracle_prediction_attempts: Dict[str, int] = {}
     entity_generation_required = task.generation_mode == "packet_and_entities"
+    _progress("开始按场景生成控制面实体与Oracle预测。")
 
     for scenario in scenario_order:
         packets_for_scenario = scenario_packets_map.get(scenario, [])
@@ -810,6 +832,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
 
         scenario_slug = _scenario_slug(scenario)
         scenario_kind = str(scenario_meta.get(scenario, {}).get("kind") or "neutral")
+        _progress(f"处理场景 '{scenario}'（kind={scenario_kind}, packets={len(packets_for_scenario)}）。")
         last_entity_feedback: Optional[str] = None
         last_entities: Optional[RuleSetCandidate] = None
         last_entity_critic: Optional[CriticResult] = None
@@ -829,6 +852,9 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 }
                 entity_gen_in_str = "Generate RuleSetCandidate STRICT JSON. Input:\n\n" + json.dumps(entity_gen_in, indent=2)
                 try:
+                    _progress(
+                        f"Agent4 正在生成场景'{scenario}'的控制面实体（第{attempt}/{cfg.max_retries}轮）。"
+                    )
                     entity_raw = agent4.run(
                         entity_gen_in_str,
                         output_schema=RuleSetCandidate,
@@ -836,6 +862,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                     ).content
                 except Exception as e:
                     last_entity_feedback = f"Agent4 API error: {_error_text(e)}"
+                    _progress(f"Agent4 调用失败：{last_entity_feedback}")
                     recorder.record(
                         agent_role="agent4_entity_generator",
                         step=f"entity_candidate_{scenario_slug}",
@@ -847,6 +874,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 entity_candidate = _coerce_schema_output(entity_raw, RuleSetCandidate)
                 if entity_candidate is None:
                     last_entity_feedback = "Agent4 schema parse failed (possibly timeout/non-JSON output)."
+                    _progress(f"Agent4 输出解析失败：{last_entity_feedback}")
                     recorder.record(
                         agent_role="agent4_entity_generator",
                         step=f"entity_candidate_{scenario_slug}",
@@ -887,6 +915,9 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                     + json.dumps(entity_critic_in, indent=2)
                 )
                 try:
+                    _progress(
+                        f"Agent5 正在审查场景'{scenario}'控制面实体（第{attempt}/{cfg.max_retries}轮）。"
+                    )
                     entity_critic_raw = agent5.run(
                         entity_critic_in_str,
                         output_schema=CriticResult,
@@ -894,6 +925,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                     ).content
                 except Exception as e:
                     last_entity_feedback = f"Agent5 API error: {_error_text(e)}"
+                    _progress(f"Agent5 调用失败：{last_entity_feedback}")
                     recorder.record(
                         agent_role="agent5_entity_critic",
                         step=f"entity_critic_result_{scenario_slug}",
@@ -905,6 +937,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 llm_entity_critic = _coerce_schema_output(entity_critic_raw, CriticResult)
                 if llm_entity_critic is None:
                     last_entity_feedback = "Agent5 schema parse failed (possibly timeout/non-JSON output)."
+                    _progress(f"Agent5 输出解析失败：{last_entity_feedback}")
                     recorder.record(
                         agent_role="agent5_entity_critic",
                         step=f"entity_critic_result_{scenario_slug}",
@@ -979,7 +1012,9 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 last_entity_feedback = final_entity_critic.feedback
 
                 if final_entity_critic.status == "PASS":
+                    _progress(f"场景'{scenario}'的实体生成已通过审查。")
                     break
+                _progress(f"场景'{scenario}'实体未通过，准备重试。原因：{last_entity_feedback}")
 
             if last_entities is None or last_entity_critic is None:
                 raise RuntimeError(
@@ -993,6 +1028,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         else:
             # packet_only mode: skip Agent4/5 while preserving a deterministic
             # execution timeline for packet replay and oracle prediction.
+            _progress(f"当前为packet_only模式，场景'{scenario}'跳过Agent4/Agent5，直接转交Agent6。")
             empty_candidate = RuleSetCandidate(task_id=task.task_id, entities=[])
             normalized_cp_sequence: List[ControlPlaneOperation] = []
             normalized_execution_sequence = _normalize_execution_sequence(
@@ -1045,6 +1081,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 "Generate OraclePredictionCandidate STRICT JSON. Input:\n\n" + json.dumps(oracle_in, indent=2)
             )
             try:
+                _progress(f"Agent6 正在生成场景'{scenario}'的Oracle预测（第{attempt}/{cfg.max_retries}轮）。")
                 oracle_raw = agent6.run(
                     oracle_in_str,
                     output_schema=OraclePredictionCandidate,
@@ -1052,6 +1089,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 ).content
             except Exception as e:
                 last_oracle_feedback = f"Agent6 API error: {_error_text(e)}"
+                _progress(f"Agent6 调用失败：{last_oracle_feedback}")
                 recorder.record(
                     agent_role="agent6_oracle_predictor",
                     step=f"oracle_prediction_{scenario_slug}",
@@ -1063,6 +1101,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             oracle_candidate = _coerce_schema_output(oracle_raw, OraclePredictionCandidate)
             if oracle_candidate is None:
                 last_oracle_feedback = "Agent6 schema parse failed (possibly timeout/non-JSON output)."
+                _progress(f"Agent6 输出解析失败：{last_oracle_feedback}")
                 recorder.record(
                     agent_role="agent6_oracle_predictor",
                     step=f"oracle_prediction_{scenario_slug}",
@@ -1097,6 +1136,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             )
             if validation_feedback:
                 last_oracle_feedback = validation_feedback
+                _progress(f"Agent6 输出未通过确定性校验，准备重试。原因：{validation_feedback}")
                 continue
 
             recorder.record(
@@ -1107,6 +1147,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 model_output=oracle_candidate.model_dump(),
             )
             oracle_prediction = oracle_candidate
+            _progress(f"场景'{scenario}'的Oracle预测已生成。")
             break
 
         if oracle_prediction is None:
@@ -1127,6 +1168,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 model_input={"scenario": scenario, "reason": fallback_reason},
                 model_output=oracle_prediction.model_dump(),
             )
+            _progress(f"场景'{scenario}'的Oracle预测使用fallback。")
         else:
             scenario_oracle_prediction_status[scenario] = "PASS"
             scenario_oracle_prediction_feedback[scenario] = "oracle prediction generated"
