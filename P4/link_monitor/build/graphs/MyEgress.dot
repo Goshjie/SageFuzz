@@ -1,0 +1,42 @@
+digraph MyEgress {
+subgraph cluster {
+graph [
+label="", labeljust=r, style=bold];
+0[label=__START__, margin="", shape=rectangle, style=solid];
+1[label=__EXIT__, margin="", shape=rectangle, style=solid];
+2[label="cur_time_0/cur_time = standard_metadata.egress_global_timestamp;
+...
+byte_cnt_0/byte_cnt = byte_cnt_0/byte_cnt + standard_metadata.packet_length;", margin="", shape=rectangle, style=solid];
+3[label="hdr.probe.isValid();", margin="", shape=rectangle, style=solid];
+4[label="tmp = 0;", margin="", shape=rectangle, style=solid];
+5[label="tmp/byte_cnt = byte_cnt_0/byte_cnt;", margin="", shape=rectangle, style=solid];
+6[label="new_byte_cnt_0/new_byte_cnt = tmp/byte_cnt;
+byte_cnt_reg_0/byte_cnt_reg.write((bit<32>)standard_metadata.egress_port, new_byte_cnt_0/new_byte_cnt);", margin="", shape=rectangle, style=solid];
+7[label="hdr.probe.isValid();", margin="", shape=rectangle, style=solid];
+8[label="hdr.probe_data.push_front(1);
+hdr.probe_data[0].setValid();", margin="", shape=rectangle, style=solid];
+9[label="hdr.probe.hop_cnt == 1;", margin="", shape=rectangle, style=solid];
+10[label="hdr.probe_data[0].bos = 1;", margin="", shape=rectangle, style=solid];
+11[label="hdr.probe_data[0].bos = 0;", margin="", shape=rectangle, style=solid];
+12[label="MyEgress.swid", margin="", shape=ellipse, style=solid];
+13[label="hdr.probe_data[0].port = (bit<8>)standard_metadata.egress_port;
+...
+hdr.probe_data[0].cur_time = cur_time_0/cur_time;", margin="", shape=rectangle, style=solid];
+0 -> 2[label=""];
+2 -> 3[label=""];
+3 -> 4[label=TRUE];
+3 -> 5[label=FALSE];
+4 -> 6[label=""];
+5 -> 6[label=""];
+6 -> 7[label=""];
+7 -> 8[label=TRUE];
+7 -> 1[label=FALSE];
+8 -> 9[label=""];
+9 -> 10[label=TRUE];
+9 -> 11[label=FALSE];
+10 -> 12[label=""];
+11 -> 12[label=""];
+12 -> 13[label=""];
+13 -> 1[label=""];
+}
+}

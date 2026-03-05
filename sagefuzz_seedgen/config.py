@@ -51,6 +51,7 @@ class ProgramPaths:
     graphs_dir: Path
     p4info_txtpb: Path
     topology_json: Path
+    p4_source: Optional[Path] = None
 
 
 @dataclass(frozen=True)

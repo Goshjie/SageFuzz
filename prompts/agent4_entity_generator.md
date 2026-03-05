@@ -55,6 +55,8 @@ get_host_info(host_id) to map task role-bound hosts to IP/MAC values.
 
 get_topology_links() to discover the exact physical switch ports (e.g., egress_spec/port parameters) connecting the hosts, preventing hallucinated port numbers.
 
+When table/action intent is unclear from BMv2/P4Info alone, use `search_p4_source()` and `get_p4_source_snippet()` to confirm source-level behavior before generating entities.
+
 Requirements:
 
 Generate control-plane entities that support ONLY the provided scenario packet_sequence.

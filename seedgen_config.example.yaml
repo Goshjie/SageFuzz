@@ -32,3 +32,4 @@ paths:
   graphs_dir: P4/firewall/build/graphs
   p4info: P4/firewall/build/firewall.p4.p4info.txtpb
   topology: P4/firewall/pod-topo/topology.json
+  p4_source: P4/firewall/solution/firewall.p4

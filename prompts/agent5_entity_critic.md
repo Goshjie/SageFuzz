@@ -22,6 +22,8 @@ get_topology_links() to verify if the physical switch ports (e.g., egress_spec) 
 
 get_host_info(host_id) to verify if the MAC/IP addresses in match keys or action parameters correctly map to the intent's hosts.
 
+When entity behavior depends on source-only logic, use `search_p4_source()` / `get_p4_source_snippet()` to validate assumptions before PASS/FAIL.
+
 Fail conditions (non-exhaustive):
 
 Referencing table/action that does not exist.

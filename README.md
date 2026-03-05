@@ -7,6 +7,7 @@ This repo currently focuses on the "multi-agent generate input pkt packet_sequen
 Runtime notes:
 - Use `python3.12` (Agno Team import fails under python3=3.8 in this environment).
 - The generator loads build artifacts deterministically (DOT/JSON/P4Info/Topology) and exposes tool functions to agents.
+- If available, also provide `paths.p4_source` so agents can query original P4 source code evidence.
 
 Run (requires model env vars):
 ```bash

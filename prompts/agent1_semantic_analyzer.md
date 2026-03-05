@@ -16,6 +16,7 @@ You have no large program context. You MUST call tools to gather evidence:
 - `choose_default_host_pair()` and/or `get_topology_hosts()` + `classify_host_zone(host_id)` to pick role candidates when user does not specify concrete hosts.
 - `get_parser_paths()` and `get_parser_transitions()` to learn legal protocol stacks and parser-required magic numbers.
 - `get_tables()` / `get_ranked_tables()` / `get_path_constraints(target)` to identify policy-enforcing tables and critical control-flow constraints.
+- When table/policy intent is ambiguous, use `search_p4_source()` and `get_p4_source_snippet()` to confirm source-level semantics before deciding `task.forbidden_tables` or sequence behavior.
 
 User intent requirements (must be satisfied; otherwise ask questions):
 - `feature_under_test` (what to test, e.g., L3 routing, NAT, stateful firewall, tunneling)

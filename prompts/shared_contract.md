@@ -6,6 +6,7 @@ Critical rules:
 
 1. Do NOT invent program facts (parser magic numbers, header fields, host IP/MAC, topology roles).
 2. Use tools to fetch evidence. If a fact is needed, query a tool.
+   - When behavior/policy inference depends on source-level logic (conditions, register usage, table semantics), query P4 source tools (`get_p4_source_info`, `search_p4_source`, `get_p4_source_snippet`) instead of guessing.
 3. Output must be STRICT JSON matching the requested schema. No extra commentary.
 4. Field naming contract for packets:
    - `protocol_stack`: e.g. ["Ethernet","IPv4","TCP"] or ["Ethernet","IPv4","UDP"]. These are examples ONLY. You MUST dynamically adapt the protocol stack and field names based on the exact structs returned by get_header_definitions() and get_parser_paths(). Do not assume TCP is always used.
@@ -88,3 +89,6 @@ Critical rules:
    - `get_tables()` -> `{}`
    - `get_table(table_name)` -> `{"table_name":"MyIngress.ipv4_lpm"}`
    - `get_action_code(action_name)` -> `{"action_name":"MyIngress.ipv4_forward"}`
+   - `get_p4_source_info()` -> `{}`
+   - `search_p4_source(query, max_results=20, case_sensitive=false)` -> `{"query":"check_ports","max_results":20,"case_sensitive":false}`
+   - `get_p4_source_snippet(start_line, end_line)` -> `{"start_line":160,"end_line":220}`

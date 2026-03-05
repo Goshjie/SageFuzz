@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, Mapping
+from typing import Any, Dict, Mapping, Optional
 
 from sagefuzz_seedgen.dot.dot_loader import load_dot_graphs
 from sagefuzz_seedgen.runtime.program_context import ProgramContext
@@ -64,11 +64,18 @@ def initialize_program_context(
     graphs_dir: Path,
     p4info_path: Path,
     topology_path: Path,
+    p4_source_path: Optional[Path] = None,
 ) -> ProgramContext:
     bmv2_json_path = bmv2_json_path.resolve()
     graphs_dir = graphs_dir.resolve()
     p4info_path = p4info_path.resolve()
     topology_path = topology_path.resolve()
+    resolved_p4_source_path: Optional[Path] = None
+    p4_source_code: Optional[str] = None
+    if p4_source_path is not None:
+        resolved_p4_source_path = p4_source_path.resolve()
+        with resolved_p4_source_path.open("r", encoding="utf-8") as f:
+            p4_source_code = f.read()
 
     with bmv2_json_path.open("r", encoding="utf-8") as f:
         bmv2_json = json.load(f)
@@ -99,6 +106,8 @@ def initialize_program_context(
         dot_graphs=dot_graphs,
         p4info_path=p4info_path,
         p4info_txtpb=p4info_txtpb,
+        p4_source_path=resolved_p4_source_path,
+        p4_source_code=p4_source_code,
         topology_path=topology_path,
         topology=topology,
         header_types_by_name=header_types_by_name,
@@ -109,4 +118,3 @@ def initialize_program_context(
         host_info=host_info,
         program_name=program_name,
     )
-

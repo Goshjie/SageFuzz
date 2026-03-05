@@ -28,6 +28,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--graphs-dir", type=_path, default=Path("P4/firewall/build/graphs"))
     ap.add_argument("--p4info", type=_path, default=Path("P4/firewall/build/firewall.p4.p4info.txtpb"))
     ap.add_argument("--topology", type=_path, default=Path("P4/firewall/pod-topo/topology.json"))
+    ap.add_argument("--p4-source", type=_path, default=None, help="Optional path to original P4 source file.")
 
     ap.add_argument("--max-retries", type=int, default=4)
     ap.add_argument("--out", type=_path, default=None)
@@ -124,6 +125,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         graphs_dir=_path(paths_section.get("graphs_dir")) if paths_section.get("graphs_dir") else args.graphs_dir,
         p4info_txtpb=_path(paths_section.get("p4info")) if paths_section.get("p4info") else args.p4info,
         topology_json=_path(paths_section.get("topology")) if paths_section.get("topology") else args.topology,
+        p4_source=(
+            _path(paths_section.get("p4_source"))
+            if paths_section.get("p4_source")
+            else args.p4_source
+        ),
     )
 
     cfg = RunConfig(

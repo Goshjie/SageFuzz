@@ -427,8 +427,13 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         graphs_dir=cfg.program.graphs_dir,
         p4info_path=cfg.program.p4info_txtpb,
         topology_path=cfg.program.topology_json,
+        p4_source_path=cfg.program.p4_source,
     )
     set_program_context(ctx)
+    if not isinstance(ctx.p4_source_code, str) or not ctx.p4_source_code:
+        _progress("未加载P4源码（paths.p4_source为空），相关源码查询工具将返回 unavailable。")
+    else:
+        _progress(f"已加载P4源码: {ctx.p4_source_path}")
 
     session_state_path = cfg.session_state_path or Path("runs/session_state.json")
     session_state = _load_json_file(session_state_path)
@@ -440,6 +445,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             "graphs_dir": str(cfg.program.graphs_dir),
             "p4info": str(cfg.program.p4info_txtpb),
             "topology": str(cfg.program.topology_json),
+            "p4_source": str(cfg.program.p4_source) if cfg.program.p4_source else None,
         }
     )
 

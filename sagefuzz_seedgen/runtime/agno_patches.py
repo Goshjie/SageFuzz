@@ -15,6 +15,19 @@ TOOL_ARGUMENT_ALIASES: Dict[str, Dict[str, str]] = {
     "get_action_code": {"action": "action_name", "name": "action_name"},
     "get_ranked_tables": {"graph": "graph_name"},
     "get_jump_dict": {"graph": "graph_name"},
+    "search_p4_source": {
+        "pattern": "query",
+        "keyword": "query",
+        "text": "query",
+        "max_matches": "max_results",
+        "limit": "max_results",
+    },
+    "get_p4_source_snippet": {
+        "start": "start_line",
+        "end": "end_line",
+        "from_line": "start_line",
+        "to_line": "end_line",
+    },
 }
 
 # Some providers occasionally drift to camelCase tool names.
@@ -32,6 +45,9 @@ TOOL_NAME_ALIASES: Dict[str, str] = {
     "get_rankedTables": "get_ranked_tables",
     "get_jumpDict": "get_jump_dict",
     "get_pathConstraints": "get_path_constraints",
+    "get_p4Source_info": "get_p4_source_info",
+    "search_p4Source": "search_p4_source",
+    "get_p4Source_snippet": "get_p4_source_snippet",
 }
 
 

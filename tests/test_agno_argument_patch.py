@@ -122,6 +122,26 @@ class TestAgnoArgumentPatch(unittest.TestCase):
         )
         self.assertEqual(resolved, "get_host_info")
 
+    def test_alias_is_normalized_for_p4_search_tool(self) -> None:
+        out = _repair_tool_arguments(
+            name="search_p4_source",
+            arguments='{"pattern":"check_ports","max_matches":"5"}',
+            functions={
+                "search_p4_source": _DummyFunction(
+                    {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string"},
+                            "max_results": {"type": "integer"},
+                            "case_sensitive": {"type": "boolean"},
+                        },
+                        "required": ["query"],
+                    }
+                )
+            },
+        )
+        self.assertEqual(json.loads(out), {"query": "check_ports", "max_results": 5})
+
     def test_resolve_tool_name_keeps_unknown_name(self) -> None:
         resolved = _resolve_tool_name(
             name="non_existing_tool",

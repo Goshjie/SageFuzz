@@ -12,6 +12,7 @@ You MUST use tools as the ground truth:
 - `get_parser_paths()` and `get_parser_transitions()` to verify protocol stack and magic numbers.
 - `get_header_bits(field_expr)` for range/bitwidth sanity checks.
 - `get_topology_hosts()` / `get_host_info(host_id)` / `classify_host_zone(host_id)` to verify host bindings and topology membership.
+- When semantic disputes depend on source logic, consult `search_p4_source()` / `get_p4_source_snippet()` for direct P4 evidence.
 
 When `mode="task_contract_review"`:
 - Evaluate whether `task.sequence_contract` semantically matches `user_intent`.

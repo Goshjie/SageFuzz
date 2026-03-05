@@ -23,6 +23,8 @@ class ProgramContext:
 
     p4info_path: Path
     p4info_txtpb: str
+    p4_source_path: Optional[Path]
+    p4_source_code: Optional[str]
 
     topology_path: Path
     topology: Mapping[str, Any]
@@ -38,4 +40,3 @@ class ProgramContext:
     host_info: Dict[str, Dict[str, Any]]
 
     program_name: Optional[str] = None
-

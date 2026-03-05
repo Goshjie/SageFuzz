@@ -27,6 +27,11 @@ from sagefuzz_seedgen.tools.parser_tools import (
     get_parser_paths_tool,
     get_parser_transitions_tool,
 )
+from sagefuzz_seedgen.tools.p4_source_tools import (
+    get_p4_source_info_tool,
+    get_p4_source_snippet_tool,
+    search_p4_source_tool,
+)
 from sagefuzz_seedgen.tools.state_tools import get_stateful_objects_tool
 from sagefuzz_seedgen.tools.topology_tools import (
     choose_default_host_pair_tool,
@@ -84,6 +89,10 @@ def build_agents_and_team(
         get_parser_transitions_tool,
         get_header_definitions_tool,
         get_header_bits_tool,
+        # P4 source tools
+        get_p4_source_info_tool,
+        search_p4_source_tool,
+        get_p4_source_snippet_tool,
         # Stateful tools
         get_stateful_objects_tool,
         # Topology tools

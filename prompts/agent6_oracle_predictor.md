@@ -30,6 +30,8 @@ Use task.role_bindings + task.sequence_contract + topology/tool evidence as the 
 
 Call relevant tools (e.g., get_stateful_objects(), get_topology_links()) if you need to confirm the program's memory capabilities or physical reachability before concluding a prediction.
 
+When packet outcomes depend on source-level conditions not explicit in entities, use `search_p4_source()` and `get_p4_source_snippet()` to ground prediction decisions.
+
 - Handle both generation modes strictly differently based on their testing purposes:
   - `packet_and_entities` (Data Plane / Hardware Mapping Testing): `entities` are provided. Base your prediction explicitly on how these exact provided entities process the packets to trigger the target states.
   - `packet_only` (Control Plane Rule Behavioral Testing): `entities` will be empty because you are testing if the externally deployed rules satisfy the logic. **You MUST ASSUME the hardware tables are already correctly populated by the controller to enforce the `user_intent`.** Base your prediction STRICTLY on the intended behavioral logic (e.g., if the intent says "internal can reach external", predict `deliver`). Do NOT predict a "table miss" just because the `entities` array is empty.
