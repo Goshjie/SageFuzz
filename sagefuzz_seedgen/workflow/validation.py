@@ -9,6 +9,7 @@ from sagefuzz_seedgen.schemas import (
     CriticResult,
     ExecutionOperation,
     PacketSpec,
+    PacketStepSpec,
     SequenceScenarioSpec,
     TableRule,
     TaskSpec,
@@ -48,6 +49,8 @@ def _coerce_literal(value: Any) -> Any:
 
 def _expectation_matches(actual: Any, expected: Any) -> bool:
     if isinstance(expected, dict):
+        if expected.get("non_empty") is True:
+            return actual is not None and str(actual).strip() != ""
         if "equals" in expected and not _expectation_matches(actual, expected["equals"]):
             return False
         if "eq" in expected and not _expectation_matches(actual, expected["eq"]):
@@ -94,6 +97,46 @@ def _expectation_matches(actual: Any, expected: Any) -> bool:
     left = _coerce_literal(actual)
     right = _coerce_literal(expected)
     return left == right
+
+
+def _resolve_symbolic_expectation(
+    expected: Any,
+    *,
+    ctx: ProgramContext,
+    role_bindings: Dict[str, str],
+    step: PacketStepSpec,
+) -> Any:
+    if not isinstance(expected, str):
+        return expected
+    token = expected.strip()
+    if not token:
+        return expected
+
+    abstract_tokens = {
+        "fixed",
+        "fixed_single_port",
+        "different_from_positive",
+        "incrementing",
+        "decrementing",
+        "same_flow",
+        "same_as_previous",
+    }
+    if token in abstract_tokens:
+        return {"non_empty": True}
+
+    if token.endswith("_ip"):
+        role = token[:-3]
+        host_id = role_bindings.get(role)
+        if host_id in ctx.host_info:
+            return _normalize_ipv4(ctx.host_info[host_id].get("ip")) or expected
+
+    if token.endswith("_mac"):
+        role = token[:-4]
+        host_id = role_bindings.get(role)
+        if host_id in ctx.host_info:
+            return ctx.host_info[host_id].get("mac") or expected
+
+    return expected
 
 
 def _scenario_packets(packet_sequence: List[PacketSpec], scenario: str) -> List[PacketSpec]:
@@ -222,7 +265,13 @@ def _validate_scenario_contract(
 
             for field, expected in step.field_expectations.items():
                 actual = step_packet.fields.get(field)
-                if not _expectation_matches(actual, expected):
+                resolved_expected = _resolve_symbolic_expectation(
+                    expected,
+                    ctx=ctx,
+                    role_bindings=role_bindings,
+                    step=step,
+                )
+                if not _expectation_matches(actual, resolved_expected):
                     return CriticResult(
                         status="FAIL",
                         feedback=(

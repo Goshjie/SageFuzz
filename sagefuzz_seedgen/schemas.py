@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class UserIntent(BaseModel):
@@ -157,7 +157,7 @@ class TaskSpec(BaseModel):
         None,
         description="Intent-level expected observation result, e.g. monitored link utilization increases after traffic.",
     )
-    observation_requirements: List[ObservationIntentSpec] = Field(
+    observation_requirements: List[Any] = Field(
         default_factory=list,
         description="Structured observation actions implied by the test intent.",
     )
@@ -172,7 +172,7 @@ class TaskSpec(BaseModel):
             "e.g. {'initiator':'h2','responder':'h3'}."
         ),
     )
-    sequence_contract: List["SequenceScenarioSpec"] = Field(
+    sequence_contract: List[Any] = Field(
         default_factory=list,
         description="Scenario contracts that define required packet steps and field relations.",
     )
@@ -195,6 +195,45 @@ class TaskSpec(BaseModel):
             "Supports full names (e.g., MyIngress.check_ports) and short names (e.g., check_ports)."
         ),
     )
+
+    @field_validator("observation_requirements")
+    @classmethod
+    def _validate_observation_requirements(cls, value: List[Any]) -> List[ObservationIntentSpec]:
+        out: List[ObservationIntentSpec] = []
+        for item in value:
+            try:
+                out.append(item if isinstance(item, ObservationIntentSpec) else ObservationIntentSpec.model_validate(item))
+            except Exception:
+                continue
+        return out
+
+    @field_validator("sequence_contract")
+    @classmethod
+    def _validate_sequence_contract(cls, value: List[Any]) -> List["SequenceScenarioSpec"]:
+        out: List[SequenceScenarioSpec] = []
+        for item in value:
+            out.append(item if isinstance(item, SequenceScenarioSpec) else SequenceScenarioSpec.model_validate(item))
+        return out
+
+
+    @model_validator(mode="after")
+    def _normalize_role_bindings(self) -> "TaskSpec":
+        role_bindings = dict(self.role_bindings)
+        if role_bindings and all(isinstance(k, str) and k.startswith("h") and k[1:].isdigit() for k in role_bindings.keys()):
+            inverted = {str(v): str(k) for k, v in role_bindings.items() if isinstance(k, str) and isinstance(v, str)}
+            if inverted and all(isinstance(host, str) and host.startswith("h") and host[1:].isdigit() for host in inverted.values()):
+                self.role_bindings = inverted
+                for scenario in self.sequence_contract:
+                    if not isinstance(scenario, SequenceScenarioSpec):
+                        continue
+                    for step in scenario.steps:
+                        if not isinstance(step, PacketStepSpec):
+                            continue
+                        if step.tx_role in role_bindings and isinstance(role_bindings.get(step.tx_role), str):
+                            step.tx_role = str(role_bindings[step.tx_role])
+                        if step.rx_role in role_bindings and isinstance(role_bindings.get(step.rx_role), str):
+                            step.rx_role = str(role_bindings[step.rx_role])
+        return self
 
 
 class PacketStepSpec(BaseModel):
@@ -255,17 +294,33 @@ class SequenceScenarioSpec(BaseModel):
         None,
         description="Scenario-level expected observation, especially for telemetry/monitoring tests.",
     )
-    steps: List[PacketStepSpec] = Field(
+    steps: List[Any] = Field(
         default_factory=list,
         description="Ordered packet-step expectations for this scenario.",
     )
-    field_relations: List[FieldRelationSpec] = Field(
+    field_relations: List[Any] = Field(
         default_factory=list,
         description="Cross-step numeric field relations inside this scenario.",
     )
     allow_additional_packets: bool = Field(
         True, description="If false, packet count in this scenario must equal len(steps)."
     )
+
+    @field_validator("steps")
+    @classmethod
+    def _validate_steps(cls, value: List[Any]) -> List[PacketStepSpec]:
+        return [item if isinstance(item, PacketStepSpec) else PacketStepSpec.model_validate(item) for item in value]
+
+    @field_validator("field_relations")
+    @classmethod
+    def _validate_field_relations(cls, value: List[Any]) -> List[FieldRelationSpec]:
+        out: List[FieldRelationSpec] = []
+        for item in value:
+            try:
+                out.append(item if isinstance(item, FieldRelationSpec) else FieldRelationSpec.model_validate(item))
+            except Exception:
+                continue
+        return out
 
 
 class PacketSpec(BaseModel):
@@ -285,7 +340,36 @@ class CriticResult(BaseModel):
 
 class PacketSequenceCandidate(BaseModel):
     task_id: str
-    packet_sequence: List[PacketSpec]
+    packet_sequence: List[Any]
+
+    @field_validator("packet_sequence")
+    @classmethod
+    def _validate_packet_sequence(cls, value: List[Any]) -> List[PacketSpec]:
+        flattened: List[Any] = []
+        next_packet_id = 1
+        for item in value:
+            if isinstance(item, dict) and isinstance(item.get("packets"), list):
+                scenario = item.get("scenario")
+                for packet in item.get("packets", []):
+                    if not isinstance(packet, dict):
+                        continue
+                    packet_copy = dict(packet)
+                    packet_copy.setdefault("scenario", scenario)
+                    packet_copy.setdefault("packet_id", next_packet_id)
+                    flattened.append(packet_copy)
+                    next_packet_id += 1
+                continue
+            if isinstance(item, PacketSpec):
+                next_packet_id = max(next_packet_id, int(item.packet_id) + 1)
+                flattened.append(item)
+                continue
+            if isinstance(item, dict):
+                packet_copy = dict(item)
+                packet_copy.setdefault("packet_id", next_packet_id)
+                flattened.append(packet_copy)
+                next_packet_id += 1
+                continue
+        return [item if isinstance(item, PacketSpec) else PacketSpec.model_validate(item) for item in flattened]
 
 
 class TableRule(BaseModel):
@@ -351,15 +435,33 @@ class ExecutionOperation(BaseModel):
 
 class RuleSetCandidate(BaseModel):
     task_id: str
-    entities: List[TableRule]
-    control_plane_sequence: List[ControlPlaneOperation] = Field(
+    entities: List[Any]
+    control_plane_sequence: List[Any] = Field(
         default_factory=list,
         description="Ordered controller operations for this scenario.",
     )
-    execution_sequence: List[ExecutionOperation] = Field(
+    execution_sequence: List[Any] = Field(
         default_factory=list,
         description="Unified ordered execution sequence across control-plane actions and packet sends.",
     )
+
+    @field_validator("entities")
+    @classmethod
+    def _validate_entities(cls, value: List[Any]) -> List[TableRule]:
+        return [item if isinstance(item, TableRule) else TableRule.model_validate(item) for item in value]
+
+    @field_validator("control_plane_sequence")
+    @classmethod
+    def _validate_control_plane_sequence(cls, value: List[Any]) -> List[ControlPlaneOperation]:
+        return [
+            item if isinstance(item, ControlPlaneOperation) else ControlPlaneOperation.model_validate(item)
+            for item in value
+        ]
+
+    @field_validator("execution_sequence")
+    @classmethod
+    def _validate_execution_sequence(cls, value: List[Any]) -> List[ExecutionOperation]:
+        return [item if isinstance(item, ExecutionOperation) else ExecutionOperation.model_validate(item) for item in value]
 
 
 class OraclePacketPrediction(BaseModel):
@@ -389,8 +491,16 @@ class OraclePacketPrediction(BaseModel):
 class OraclePredictionCandidate(BaseModel):
     task_id: str
     scenario: str
-    packet_predictions: List[OraclePacketPrediction]
+    packet_predictions: List[Any]
     assumptions: List[str] = Field(default_factory=list)
+
+    @field_validator("packet_predictions")
+    @classmethod
+    def _validate_packet_predictions(cls, value: List[Any]) -> List[OraclePacketPrediction]:
+        return [
+            item if isinstance(item, OraclePacketPrediction) else OraclePacketPrediction.model_validate(item)
+            for item in value
+        ]
 
 
 class RuntimePacketObservation(BaseModel):
@@ -404,8 +514,22 @@ class Agent1Output(BaseModel):
     """Semantic Analyzer output: either a TaskSpec, or questions for the user."""
 
     kind: Literal["task", "questions"]
-    task: Optional[TaskSpec] = None
-    questions: Optional[List[UserQuestion]] = None
+    task: Optional[Any] = None
+    questions: Optional[List[Any]] = None
+
+    @field_validator("task")
+    @classmethod
+    def _validate_task(cls, value: Optional[Any]) -> Optional[TaskSpec]:
+        if value is None or isinstance(value, TaskSpec):
+            return value
+        return TaskSpec.model_validate(value)
+
+    @field_validator("questions")
+    @classmethod
+    def _validate_questions(cls, value: Optional[List[Any]]) -> Optional[List[UserQuestion]]:
+        if value is None:
+            return None
+        return [item if isinstance(item, UserQuestion) else UserQuestion.model_validate(item) for item in value]
 
 
 class AttemptResult(BaseModel):

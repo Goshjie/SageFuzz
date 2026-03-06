@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import ipaddress
+from collections import Counter
 from typing import Any, Dict, Mapping, Optional
 
 
 def parse_host_ip(ip_cidr: str) -> ipaddress.IPv4Interface:
-    # Only IPv4 is needed for our current P4 examples.
     return ipaddress.ip_interface(ip_cidr)  # type: ignore[arg-type]
 
 
@@ -15,16 +15,25 @@ def host_connected_switch(host_id: str, host_to_switch: Mapping[str, str]) -> Op
 
 
 def classify_host_zone(host_id: str, *, host_to_switch: Mapping[str, str]) -> str:
-    """Classify a host as internal/external based on which switch it connects to.
+    """Classify host zone conservatively.
 
-    For the provided pod-topo, hosts connected to s1 are treated as internal and to s2 as external.
-    If unknown, returns "unknown".
+    Only infer internal/external when topology clearly looks like a two-sided zone topology
+    (exactly two host-facing switches and each side serves multiple hosts). Otherwise return unknown.
     """
 
     sw = host_connected_switch(host_id, host_to_switch)
-    if sw == "s1":
+    if not sw:
+        return "unknown"
+
+    counts = Counter(host_to_switch.values())
+    if len(counts) != 2:
+        return "unknown"
+    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    if ranked[0][1] < 2 or ranked[1][1] < 2:
+        return "unknown"
+    if sw == ranked[0][0]:
         return "internal"
-    if sw == "s2":
+    if sw == ranked[1][0]:
         return "external"
     return "unknown"
 
@@ -32,7 +41,6 @@ def classify_host_zone(host_id: str, *, host_to_switch: Mapping[str, str]) -> st
 def summarize_topology(topology: Mapping[str, Any]) -> Dict[str, Any]:
     hosts = topology.get("hosts", {})
     links = topology.get("links", [])
-    # Keep it readable and small: hosts ip/mac, links endpoints.
     host_summary: Dict[str, Any] = {}
     if isinstance(hosts, dict):
         for hid, info in hosts.items():
@@ -42,4 +50,3 @@ def summarize_topology(topology: Mapping[str, Any]) -> Dict[str, Any]:
 
     link_summary = links if isinstance(links, list) else []
     return {"hosts": host_summary, "links": link_summary}
-

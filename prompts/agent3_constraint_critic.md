@@ -24,7 +24,7 @@ When `mode="task_contract_review"`, fail for critical semantic gaps such as:
   - `task.observation_focus`
   - `task.expected_observation_semantics`
   - meaningful `scenario_goal` / `expected_observation` in the required scenario
-- user intent mentions reading/querying counters/registers/meters/controller-visible state, but `task.observation_requirements[]` is empty
+- user intent explicitly requires reading/querying counters/registers/meters/controller-visible state, but `task.observation_requirements[]` is empty
 - user intent is about utilization / load / metric increase / state change, but the required scenario is too weak to plausibly drive the observation (for example, a single packet with no justification)
 - user intent is monitoring-focused, yet the task still forces a policy-style negative scenario even though the user did not request one
 
@@ -44,3 +44,6 @@ Output must be STRICT JSON only.
 
 Anti-overfitting review rule:
 - Do not reject a task merely because it does not look like a policy test or a telemetry test. If the task is more naturally forwarding, load-distribution, or replication-oriented, review it against that behavior rather than forcing policy/monitoring assumptions.
+
+Stateful-policy exception:
+- Do NOT require `observation_requirements[]` merely because the program internally uses registers/counters. If the user intent is to validate enforcement behavior through packet delivery/drop (for example heavy-hitter threshold blocking, per-flow gating, or stateful firewall behavior), packet-level outcomes alone can be sufficient. In such cases, only require observation requirements when the user explicitly asks to read internal state.

@@ -46,3 +46,8 @@ Packet construction rules:
 - keep packets minimal but semantically sufficient
 
 Output must be STRICT JSON only.
+
+Host-address grounding rule:
+- For any role bound to a topology host, obtain the concrete host IP and MAC via `get_host_info(host_id)` and use those exact host values when the packet should target that host.
+- Do NOT substitute gateway/switch interface addresses (e.g. `10.x.y.1`) when the contract intends to send traffic to an end host.
+- Do NOT emit placeholder MACs/IPs such as `00:00:00:...`, `10.0.0.x`, `h1_ip`, or `h2_mac` in final packet output. Final `PacketSequenceCandidate` must contain concrete values.

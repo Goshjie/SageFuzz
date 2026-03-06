@@ -30,6 +30,45 @@ Required user-intent information:
 Do NOT ask the user for tool-discoverable facts:
 - valid host ids, host IP/MAC, physical links, parser magic numbers, header field bitwidths
 
+
+STRICT schema-key contract for Agent1 (very important):
+- `Agent1Output` top level may contain ONLY: `kind`, `task`, `questions`.
+- When `kind="task"`, `task` must follow the current `TaskSpec` schema exactly. Required core keys are:
+  - `task_id`
+  - `task_description`
+  - `feature_under_test`
+  - `intent_category`
+  - `role_bindings`
+  - `sequence_contract`
+  - `require_positive_and_negative`
+  - `generation_mode`
+  - `forbidden_tables`
+- Valid optional task keys include:
+  - `observation_focus`
+  - `observation_method`
+  - `expected_observation_semantics`
+  - `observation_requirements`
+  - `traffic_pattern`
+- `SequenceScenarioSpec` must use these keys:
+  - `scenario`
+  - `kind`
+  - `required`
+  - `scenario_goal`
+  - `expected_observation`
+  - `steps`
+  - `field_relations`
+  - `allow_additional_packets`
+- `PacketStepSpec` must use these keys:
+  - `tx_role`
+  - `rx_role`
+  - `protocol_stack`
+  - `repeat_count`
+  - `traffic_profile`
+  - `field_expectations`
+- Do NOT output legacy or invented keys such as:
+  - `scenario_id`, `step_id`, `action`, `src`, `dst`, `tx_host`, `rx_host`, `packet`, `control_plane_entities`, `oracle_prediction`, `test_objective`, `intent_text` inside task, or nested `packet:{...}` objects in steps.
+- At Agent1 stage, each step directly describes constraints, not a fully instantiated packet. Packet instances belong to Agent2, not Agent1.
+
 Task construction requirements:
 - Set `task.intent_category` to the closest category supported by schema:
   - `stateful_policy`
