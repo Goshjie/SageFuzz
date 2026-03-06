@@ -11,6 +11,9 @@ model:
   # 阿里
   base_url: https://coding.dashscope.aliyuncs.com/v1
   api_key: "sk-sp-20c3eb67f9f442c4bee32874902608e6"
+  # gpt
+  base_url: https://codex-api.packycode.com/v1
+  api_key: "sk-APNVH43wyE6McPaNR5Z9FBVmGJEQgpB4"
   # Optional model transport settings for unstable networks.
   timeout_seconds: 120
   max_retries: 3
@@ -26,6 +29,15 @@ intent:
 # Optional overrides (CLI defaults are used if omitted)
 run:
   max_retries: 4
+
+memory:
+  enabled: true
+  db_path: runs/agno_memory.db
+  user_id: sagefuzz-local-user
+  update_memory_on_run: true
+  add_memories_to_context: true
+  enable_session_summaries: false
+  add_session_summary_to_context: false
 
 paths:
   bmv2_json: P4/firewall/build/firewall.json

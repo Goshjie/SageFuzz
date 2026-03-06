@@ -1,8 +1,9 @@
 import unittest
 from pathlib import Path
 
-from sagefuzz_seedgen.schemas import Agent1Output, PacketSpec, TaskSpec
+from sagefuzz_seedgen.schemas import Agent1Output, ObservationIntentSpec, PacketSpec, TaskSpec, UserQuestion
 from sagefuzz_seedgen.workflow.packet_sequence_workflow import (
+    _apply_initial_intent_answer,
     _coerce_schema_output,
     _group_packets_by_scenario,
     _normalize_test_objective,
@@ -87,6 +88,89 @@ class TestWorkflowOutputCoercion(unittest.TestCase):
             _resolve_generation_mode(intent_payload={}, task=task_packet_only),
             "packet_only",
         )
+
+    def test_apply_initial_intent_infers_monitoring_family_feature(self) -> None:
+        merged = _apply_initial_intent_answer(
+            intent_payload={},
+            full_intent="测试链路监控功能，验证探测包统计输出。",
+            test_objective="control_plane_rules",
+        )
+        self.assertEqual(merged.get("feature_under_test"), "traffic_monitoring")
+        self.assertEqual(merged.get("test_objective"), "control_plane_rules")
+
+    def test_apply_initial_intent_infers_monitoring_family_from_utilization_text(self) -> None:
+        merged = _apply_initial_intent_answer(
+            intent_payload={},
+            full_intent="验证 h1 到 h3 通信路径上一条链路的链路利用率是否能被监控到。",
+            test_objective="data_plane_behavior",
+        )
+        self.assertEqual(merged.get("feature_under_test"), "traffic_monitoring")
+
+    def test_apply_initial_intent_infers_forwarding_family(self) -> None:
+        merged = _apply_initial_intent_answer(
+            intent_payload={},
+            full_intent="验证 IPv4 路由转发是否把流量送到正确下一跳。",
+            test_objective="data_plane_behavior",
+        )
+        self.assertEqual(merged.get("feature_under_test"), "forwarding_behavior")
+
+    def test_task_spec_accepts_observation_requirements(self) -> None:
+        task = TaskSpec(
+            task_id="t-telemetry",
+            task_description="monitor link utilization",
+            feature_under_test="traffic_monitoring",
+            intent_category="telemetry_monitoring",
+            observation_focus="one monitored link on the h1->h3 path",
+            expected_observation_semantics="the monitored link metric should increase after traffic",
+            observation_requirements=[
+                ObservationIntentSpec(
+                    order=1,
+                    action_type="read_counter",
+                    target_hint="monitored_link_counter",
+                    timing="after_scenario",
+                    purpose="verify monitored link metric after traffic",
+                )
+            ],
+            role_bindings={"sender": "h1", "receiver": "h3"},
+        )
+        self.assertEqual(task.intent_category, "telemetry_monitoring")
+        self.assertEqual(task.observation_requirements[0].action_type, "read_counter")
+
+    def test_user_question_accepts_topology_mapping_alias(self) -> None:
+        q = UserQuestion(
+            field="topology_mapping",
+            question_zh="请描述链路监控相关的主机与路径映射。",
+            required=False,
+        )
+        self.assertEqual(q.field, "topology_mapping")
+
+    def test_fallback_task_spec_accepts_new_intent_categories(self) -> None:
+        task = TaskSpec(
+            task_id="t-forward",
+            task_description="verify forwarding",
+            feature_under_test="forwarding_behavior",
+            intent_category="forwarding_behavior",
+            role_bindings={"host_a": "h1", "host_b": "h3"},
+        )
+        self.assertEqual(task.intent_category, "forwarding_behavior")
+
+    def test_user_question_accepts_observation_target_field(self) -> None:
+        q = UserQuestion(
+            field="observation_target",
+            question_zh="请说明你希望监控哪一条链路或哪个观测对象。",
+            required=True,
+        )
+        self.assertEqual(q.field, "observation_target")
+
+    def test_task_spec_default_role_bindings_can_be_neutral(self) -> None:
+        task = TaskSpec(
+            task_id="t-neutral",
+            task_description="d",
+            feature_under_test="f",
+            role_bindings={"host_a": "h1", "host_b": "h3"},
+        )
+        self.assertIn("host_a", task.role_bindings)
+        self.assertIn("host_b", task.role_bindings)
 
 
 if __name__ == "__main__":

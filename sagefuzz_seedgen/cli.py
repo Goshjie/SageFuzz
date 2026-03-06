@@ -4,15 +4,24 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
-from sagefuzz_seedgen.config import ModelConfig, ProgramPaths, RunConfig
+from sagefuzz_seedgen.config import AgnoMemoryConfig, ModelConfig, ProgramPaths, RunConfig
 from sagefuzz_seedgen.config_file import find_default_config_file, load_config_file
-
 
 def _path(p: str) -> Path:
     return Path(p)
 
+def _as_bool(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return default
 
 def build_arg_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="SageFuzz seed generation: packet_sequence stage (multi-agent)")
@@ -42,7 +51,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     return ap
 
-
 def _ensure_supported_python() -> None:
     # Agno currently breaks at runtime on python3.8 in this project environment
     # (e.g., "TypeError: 'type' object is not subscriptable" from tuple[...] annotations).
@@ -53,7 +61,6 @@ def _ensure_supported_python() -> None:
             f"{cur}. Please use Python 3.9+ (recommended: 3.12).\n"
             "Example: .venv/bin/python -m sagefuzz_seedgen.cli --config seedgen_config.yaml"
         )
-
 
 def _load_intent_to_testcase_seconds(index_path: Path) -> Optional[float]:
     try:
@@ -69,7 +76,6 @@ def _load_intent_to_testcase_seconds(index_path: Path) -> Optional[float]:
     if isinstance(value, (int, float)):
         return float(value)
     return None
-
 
 def main(argv: Optional[list[str]] = None) -> int:
     _ensure_supported_python()
@@ -119,6 +125,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     run_section = cfg_data.get("run", {})
     if not isinstance(run_section, dict):
         run_section = {}
+    memory_section = cfg_data.get("memory", {})
+    if not isinstance(memory_section, dict):
+        memory_section = {}
 
     program = ProgramPaths(
         bmv2_json=_path(paths_section.get("bmv2_json")) if paths_section.get("bmv2_json") else args.bmv2_json,
@@ -131,10 +140,23 @@ def main(argv: Optional[list[str]] = None) -> int:
             else args.p4_source
         ),
     )
+    memory = AgnoMemoryConfig(
+        enabled=_as_bool(memory_section.get("enabled"), True),
+        db_path=_path(memory_section.get("db_path")) if memory_section.get("db_path") else Path("runs/agno_memory.db"),
+        user_id=str(memory_section.get("user_id") or "sagefuzz-local-user"),
+        update_memory_on_run=_as_bool(memory_section.get("update_memory_on_run"), True),
+        add_memories_to_context=_as_bool(memory_section.get("add_memories_to_context"), True),
+        enable_session_summaries=_as_bool(memory_section.get("enable_session_summaries"), False),
+        add_session_summary_to_context=_as_bool(
+            memory_section.get("add_session_summary_to_context"),
+            _as_bool(memory_section.get("enable_session_summaries"), False),
+        ),
+    )
 
     cfg = RunConfig(
         program=program,
         model=model,
+        memory=memory,
         user_intent=intent_section or None,
         max_retries=int(run_section.get("max_retries")) if run_section.get("max_retries") else args.max_retries,
         out_path=args.out,
@@ -150,7 +172,6 @@ def main(argv: Optional[list[str]] = None) -> int:
     if elapsed_seconds is not None:
         print(f"intent_to_testcase_seconds={elapsed_seconds:.3f}")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

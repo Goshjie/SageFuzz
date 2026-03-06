@@ -292,6 +292,91 @@ class TestValidation(unittest.TestCase):
         res = validate_packet_sequence_contract(ctx=self.ctx, task=task, packet_sequence=packets)
         self.assertEqual(res.status, "PASS", res.feedback)
 
+    def test_validate_packet_sequence_contract_accepts_repeat_count_burst(self) -> None:
+        task = TaskSpec.model_validate(
+            {
+                "task_id": "telemetry-1",
+                "task_description": "drive sustained traffic then query",
+                "feature_under_test": "link_monitor",
+                "intent_category": "telemetry_monitoring",
+                "role_bindings": {
+                    "traffic_src": "h1",
+                    "traffic_dst": "h3",
+                    "query_src": "h1",
+                    "query_dst": "h3"
+                },
+                "require_positive_and_negative": False,
+                "sequence_contract": [
+                    {
+                        "scenario": "telemetry_main",
+                        "kind": "positive",
+                        "required": True,
+                        "allow_additional_packets": False,
+                        "steps": [
+                            {
+                                "tx_role": "traffic_src",
+                                "rx_role": "traffic_dst",
+                                "protocol_stack": ["Ethernet", "IPv4", "UDP"],
+                                "repeat_count": 3,
+                                "traffic_profile": "sustained_udp_stream",
+                                "field_expectations": {"UDP.dport": 3000}
+                            },
+                            {
+                                "tx_role": "query_src",
+                                "rx_role": "query_dst",
+                                "protocol_stack": ["Ethernet", "IPv4", "UDP"],
+                                "field_expectations": {"UDP.dport": 4000}
+                            }
+                        ]
+                    }
+                ]
+            }
+        )
+        packets = [
+            PacketSpec(packet_id=1, tx_host="h1", scenario="telemetry_main", protocol_stack=["Ethernet", "IPv4", "UDP"], fields={"IPv4.dst": "10.0.3.3", "Ethernet.dst": "08:00:00:00:03:33", "UDP.dport": 3000}),
+            PacketSpec(packet_id=2, tx_host="h1", scenario="telemetry_main", protocol_stack=["Ethernet", "IPv4", "UDP"], fields={"IPv4.dst": "10.0.3.3", "Ethernet.dst": "08:00:00:00:03:33", "UDP.dport": 3000}),
+            PacketSpec(packet_id=3, tx_host="h1", scenario="telemetry_main", protocol_stack=["Ethernet", "IPv4", "UDP"], fields={"IPv4.dst": "10.0.3.3", "Ethernet.dst": "08:00:00:00:03:33", "UDP.dport": 3000}),
+            PacketSpec(packet_id=4, tx_host="h1", scenario="telemetry_main", protocol_stack=["Ethernet", "IPv4", "UDP"], fields={"IPv4.dst": "10.0.3.3", "Ethernet.dst": "08:00:00:00:03:33", "UDP.dport": 4000}),
+        ]
+        result = validate_packet_sequence_contract(ctx=self.ctx, task=task, packet_sequence=packets)
+        self.assertEqual(result.status, "PASS")
+
+    def test_validate_packet_sequence_contract_repeat_count_requires_enough_packets(self) -> None:
+        task = TaskSpec.model_validate(
+            {
+                "task_id": "telemetry-2",
+                "task_description": "drive sustained traffic then query",
+                "feature_under_test": "link_monitor",
+                "intent_category": "telemetry_monitoring",
+                "role_bindings": {"traffic_src": "h1", "traffic_dst": "h3"},
+                "require_positive_and_negative": False,
+                "sequence_contract": [
+                    {
+                        "scenario": "telemetry_main",
+                        "kind": "positive",
+                        "required": True,
+                        "allow_additional_packets": False,
+                        "steps": [
+                            {
+                                "tx_role": "traffic_src",
+                                "rx_role": "traffic_dst",
+                                "protocol_stack": ["Ethernet", "IPv4", "UDP"],
+                                "repeat_count": 3,
+                                "field_expectations": {"UDP.dport": 3000}
+                            }
+                        ]
+                    }
+                ]
+            }
+        )
+        packets = [
+            PacketSpec(packet_id=1, tx_host="h1", scenario="telemetry_main", protocol_stack=["Ethernet", "IPv4", "UDP"], fields={"IPv4.dst": "10.0.3.3", "Ethernet.dst": "08:00:00:00:03:33", "UDP.dport": 3000}),
+            PacketSpec(packet_id=2, tx_host="h1", scenario="telemetry_main", protocol_stack=["Ethernet", "IPv4", "UDP"], fields={"IPv4.dst": "10.0.3.3", "Ethernet.dst": "08:00:00:00:03:33", "UDP.dport": 3000}),
+        ]
+        result = validate_packet_sequence_contract(ctx=self.ctx, task=task, packet_sequence=packets)
+        self.assertEqual(result.status, "FAIL")
+        self.assertIn("repeat_count", result.feedback)
+
 
 if __name__ == "__main__":
     unittest.main()

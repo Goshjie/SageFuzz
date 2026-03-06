@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
@@ -376,6 +377,21 @@ def _apply_initial_intent_answer(
         # Keep initial intake minimal: orchestrator captures raw complete intent text,
         # and Agent1 decides whether clarifying questions are needed.
         merged["intent_text"] = full_intent
+        # Lightweight task-family hinting only. Avoid hardcoding specific program names.
+        if not _as_non_empty_str(merged.get("feature_under_test")):
+            low = full_intent.lower()
+            if any(token in low for token in ("telemetry", "monitor", "observe", "measurement", "probe")):
+                merged["feature_under_test"] = "traffic_monitoring"
+            elif any(token in full_intent for token in ("监控", "监测", "观测", "遥测", "测量", "利用率")):
+                merged["feature_under_test"] = "traffic_monitoring"
+            elif any(token in low for token in ("firewall", "acl", "access control", "policy")):
+                merged["feature_under_test"] = "policy_validation"
+            elif any(token in full_intent for token in ("防火墙", "策略", "访问控制")):
+                merged["feature_under_test"] = "policy_validation"
+            elif any(token in low for token in ("route", "routing", "forward", "lpm", "next hop")):
+                merged["feature_under_test"] = "forwarding_behavior"
+            elif any(token in full_intent for token in ("转发", "路由", "下一跳", "路径验证")):
+                merged["feature_under_test"] = "forwarding_behavior"
     if test_objective:
         merged["test_objective"] = test_objective
     return merged
@@ -406,6 +422,112 @@ def _collect_initial_intent(intent_payload: Dict[str, Any]) -> Dict[str, Any]:
         full_intent=full_intent,
         test_objective=test_objective,
     )
+
+
+def _intent_memory_labels(intent_payload: Dict[str, Any]) -> List[str]:
+    texts = []
+    for field in ("feature_under_test", "intent_text"):
+        value = _as_non_empty_str(intent_payload.get(field))
+        if value:
+            texts.append(value.lower())
+    joined = " ".join(texts)
+
+    labels: List[str] = []
+
+    def add(label: str) -> None:
+        if label not in labels:
+            labels.append(label)
+
+    objective = _normalize_test_objective(str(intent_payload.get("test_objective") or ""))
+    if objective == "data_plane_behavior":
+        add("data_plane")
+    elif objective == "control_plane_rules":
+        add("control_plane")
+
+    if any(token in joined for token in ("monitor", "monitoring", "telemetry", "observe", "measurement", "probe", "latency", "利用率", "监控", "监测", "观测", "遥测")):
+        add("measurement_observation")
+    if any(token in joined for token in ("register", "counter", "meter", "state query", "观测对象", "状态读取")):
+        add("state_query")
+    if any(token in joined for token in ("firewall", "acl", "access control", "policy", "防火墙", "策略", "访问控制")):
+        add("communication_policy")
+    if any(token in joined for token in ("route", "routing", "forward", "lpm", "next hop", "转发", "路由", "下一跳")):
+        add("forwarding_behavior")
+    if any(token in joined for token in ("path", "link", "segment", "路径", "链路", "链路段")):
+        add("path_behavior")
+    if any(token in joined for token in ("stateful", "有状态", "conntrack", "connection tracking")):
+        add("stateful_logic")
+    if any(token in joined for token in ("balance", "ecmp", "load distribution", "负载均衡", "分流")):
+        add("load_distribution")
+    if any(token in joined for token in ("multicast", "replication", "broadcast", "组播", "复制")):
+        add("replication_behavior")
+
+    has_initiation = any(token in joined for token in ("initiate", "initiates", "initiation", "initiator", "发起", "主动"))
+    has_reply = any(token in joined for token in ("reply", "response", "return traffic", "回包", "回复", "响应"))
+    has_allow = any(token in joined for token in ("allow", "permit", "success", "通过", "允许", "成功"))
+    has_block = any(token in joined for token in ("block", "blocked", "deny", "drop", "forbid", "禁止", "阻止", "不行", "失败", "丢弃"))
+    if has_initiation and has_allow and has_block:
+        add("directional_behavior")
+    if has_initiation and has_reply:
+        add("bidirectional_exchange")
+
+    if ("communication_policy" not in labels) and any(token in joined for token in ("tcp", "syn", "syn-ack", "ack", "三次握手", "握手")):
+        add("transport_handshake")
+
+    return labels
+
+
+def _normalize_intent_for_memory_bucket(intent_payload: Dict[str, Any]) -> str:
+    texts = []
+    for field in ("feature_under_test", "intent_text"):
+        value = _as_non_empty_str(intent_payload.get(field))
+        if value:
+            texts.append(value.lower())
+    objective = _normalize_test_objective(str(intent_payload.get("test_objective") or ""))
+    if objective:
+        texts.append(objective.lower())
+
+    normalized = " ".join(texts)
+    normalized = re.sub(r"\bh\d+\b", " host ", normalized)
+    normalized = re.sub(r"\b(?:s\d+|sw\d+|switch\d+)\b", " switch ", normalized)
+    normalized = re.sub(r"\b\d+\.\d+\.\d+\.\d+\b", " ip ", normalized)
+    normalized = re.sub(r"\b[0-9a-f]{2}(?::[0-9a-f]{2}){5}\b", " mac ", normalized)
+    normalized = re.sub(r"[a-z0-9_./-]+\.p4\b", " p4_source ", normalized)
+    normalized = re.sub(r"\bmyingress\.[a-z0-9_.]+\b", " table ", normalized)
+    normalized = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized
+
+
+def _derive_intent_memory_bucket(intent_payload: Dict[str, Any]) -> str:
+    labels = _intent_memory_labels(intent_payload)
+    if labels:
+        priority = [
+            "data_plane",
+            "control_plane",
+            "measurement_observation",
+            "state_query",
+            "communication_policy",
+            "forwarding_behavior",
+            "path_behavior",
+            "stateful_logic",
+            "load_distribution",
+            "replication_behavior",
+            "directional_behavior",
+            "bidirectional_exchange",
+            "transport_handshake",
+        ]
+        ordered = [label for label in priority if label in labels]
+        extra = [label for label in labels if label not in ordered]
+        return "intent-" + "-".join((ordered + extra)[:6])
+    normalized = _normalize_intent_for_memory_bucket(intent_payload)
+    digest = hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:10]
+    return f"intent-generic-{digest}"
+
+
+def _resolve_memory_user_id(*, cfg: RunConfig, intent_payload: Dict[str, Any]) -> str:
+    base_user_id = (cfg.memory.user_id or "sagefuzz-local-user").strip() or "sagefuzz-local-user"
+    bucket = _derive_intent_memory_bucket(intent_payload)
+    return f"{base_user_id}:{bucket}"
 
 
 def _resolve_generation_mode(*, intent_payload: Dict[str, Any], task: TaskSpec) -> str:
@@ -453,15 +575,39 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         raise ValueError("ModelConfig is required to run agents.")
 
     install_agno_argument_patch()
-    agent1, agent2, agent3, agent4, agent5, agent6, _team = build_agents_and_team(
-        model_cfg=cfg.model,
-        prompts_dir=Path("prompts"),
-    )
-    # Agent1 receives its system prompt at construction time. Then we collect fixed user inputs.
 
     # --- Step 1: Collect initial full intent text; Agent1 handles clarification questions ---
     intent_payload: Dict[str, Any] = dict(cfg.user_intent) if isinstance(cfg.user_intent, dict) else {}
     intent_payload = _collect_initial_intent(intent_payload)
+
+    memory_user_id = cfg.memory.user_id
+    memory_bucket = None
+    if cfg.memory.enabled:
+        memory_bucket = _derive_intent_memory_bucket(intent_payload)
+        memory_user_id = _resolve_memory_user_id(cfg=cfg, intent_payload=intent_payload)
+        _progress(
+            f"已启用Agno memory: db={cfg.memory.db_path}, bucket={memory_bucket}, user_id={memory_user_id}"
+        )
+    else:
+        _progress("Agno memory 已禁用。")
+
+    session_state["run_config"].update(
+        {
+            "agno_memory_enabled": cfg.memory.enabled,
+            "agno_memory_user_id": memory_user_id if cfg.memory.enabled else None,
+            "agno_memory_bucket": memory_bucket,
+            "agno_memory_db_path": str(cfg.memory.db_path) if cfg.memory.enabled else None,
+        }
+    )
+
+    agent1, agent2, agent3, agent4, agent5, agent6, _team = build_agents_and_team(
+        model_cfg=cfg.model,
+        prompts_dir=Path("prompts"),
+        memory_cfg=cfg.memory,
+        memory_user_id=memory_user_id,
+        session_id_prefix=run_id,
+    )
+    # Agent1 receives its system prompt at construction time. Then we collect fixed user inputs.
     recorder.record(
         agent_role="agent1_semantic_analyzer",
         step="initial_intent_intake",
@@ -492,7 +638,9 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         a1_raw_retry: Any = None
         a1_primary_error: Optional[str] = None
         a1_retry_error: Optional[str] = None
-        _progress(f"Agent1 正在执行语义分析（第{_round}/{max_intent_rounds}轮）。")
+        _progress(
+            f"Agent1 正在执行语义分析（第{_round}/{max_intent_rounds}轮，schema模式，最长等待约{int(cfg.model.timeout_seconds) if cfg.model else 0}s）。"
+        )
         try:
             a1_raw = agent1.run(
                 a1_in_str,
@@ -506,8 +654,11 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
 
         if a1_out is None:
             # Retry once without schema forcing; then coerce locally from raw content.
-            _progress("Agent1 首次输出解析失败，正在进行原始输出重试。")
+            _progress(
+                f"Agent1 首次输出解析失败，正在进行原始输出重试（当前阶段：Agent1 第{_round}/{max_intent_rounds}轮，最长等待约{int(cfg.model.timeout_seconds) if cfg.model else 0}s）。"
+            )
             try:
+                _progress("Agent1 原始输出重试调用已发出，正在等待模型返回。")
                 a1_raw_retry = agent1.run(
                     a1_in_str,
                     session_state=session_state,
@@ -548,6 +699,14 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                     "(not collapsed to one packet). "
                     "If intent says communication should succeed after permitted initiation, positive scenario must "
                     "prove bidirectional communication (at least one packet each direction). "
+                    "For telemetry/monitoring intents (e.g., link monitor), ensure sequence_contract includes "
+                    "observation-driving packets (such as probe/measurement packets), task.observation_focus/"
+                    "expected_observation_semantics are populated, and do not require policy-style negative scenarios "
+                    "unless user intent explicitly asks for them. "
+                    "If telemetry intent success depends on utilization/counter/register change, the task should not "
+                    "collapse to a single decorative packet unless user intent explicitly says one probe is enough. "
+                    "If parser/source evidence shows a dedicated probe/query header path, the task must use that exact "
+                    "custom packet format rather than a generic UDP query packet. "
                     "For policy-correctness verification intents, ensure task.forbidden_tables captures the "
                     "policy-enforcing table(s) that should be intentionally left unconfigured."
                 ),
@@ -557,7 +716,9 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 + json.dumps(task_review_in, indent=2)
             )
             try:
-                _progress(f"Agent3 正在审查TaskSpec语义（第{_round}/{max_intent_rounds}轮）。")
+                _progress(
+                f"Agent3 正在审查TaskSpec语义（第{_round}/{max_intent_rounds}轮，最长等待约{int(cfg.model.timeout_seconds) if cfg.model else 0}s）。"
+            )
                 task_review_raw = agent3.run(
                     task_review_in_str,
                     output_schema=CriticResult,
@@ -630,6 +791,10 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             elif field == "preferred_role_bindings":
                 parsed_bindings = _parse_role_bindings_answer(ans)
                 answers[field] = parsed_bindings if parsed_bindings is not None else ans
+            elif field == "topology_mapping":
+                # Keep backward compatibility with prompt variants that ask for topology_mapping.
+                answers["topology_zone_mapping"] = ans
+                answers[field] = ans
             else:
                 answers[field] = ans
 
@@ -661,11 +826,12 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         user_intent = None
     user_intent_payload = user_intent.model_dump() if user_intent else (intent_payload or None)
 
-    # Ensure role bindings are present if the model omitted them.
+    # Ensure role bindings are present if the model omitted them. Prefer neutral role names
+    # so non-policy tasks are not forced into initiator/responder framing.
     if not task.role_bindings:
         task.role_bindings = {
-            "initiator": cfg.default_initiator_host,
-            "responder": cfg.default_responder_host,
+            "host_a": cfg.default_initiator_host,
+            "host_b": cfg.default_responder_host,
         }
     if not task.sequence_contract:
         raise RuntimeError("TaskSpec.sequence_contract is empty. Agent1 must define scenario contracts.")
@@ -692,7 +858,9 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             "Generate PacketSequenceCandidate STRICT JSON. Input:\n\n" + json.dumps(gen_in, indent=2)
         )
         try:
-            _progress(f"Agent2 正在生成packet_sequence（第{attempt}/{cfg.max_retries}轮）。")
+            _progress(
+                f"Agent2 正在生成packet_sequence（第{attempt}/{cfg.max_retries}轮，最长等待约{int(cfg.model.timeout_seconds) if cfg.model else 0}s）。"
+            )
             cand_raw = agent2.run(
                 gen_in_str,
                 output_schema=PacketSequenceCandidate,
@@ -737,7 +905,9 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         }
         critic_in_str = "Evaluate candidate and return CriticResult STRICT JSON:\n\n" + json.dumps(critic_in, indent=2)
         try:
-            _progress(f"Agent3 正在审查packet_sequence（第{attempt}/{cfg.max_retries}轮）。")
+            _progress(
+                f"Agent3 正在审查packet_sequence（第{attempt}/{cfg.max_retries}轮，最长等待约{int(cfg.model.timeout_seconds) if cfg.model else 0}s）。"
+            )
             critic_raw = agent3.run(
                 critic_in_str,
                 output_schema=CriticResult,
@@ -1087,7 +1257,9 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 "Generate OraclePredictionCandidate STRICT JSON. Input:\n\n" + json.dumps(oracle_in, indent=2)
             )
             try:
-                _progress(f"Agent6 正在生成场景'{scenario}'的Oracle预测（第{attempt}/{cfg.max_retries}轮）。")
+                _progress(
+                    f"Agent6 正在生成场景'{scenario}'的Oracle预测（第{attempt}/{cfg.max_retries}轮，最长等待约{int(cfg.model.timeout_seconds) if cfg.model else 0}s）。"
+                )
                 oracle_raw = agent6.run(
                     oracle_in_str,
                     output_schema=OraclePredictionCandidate,

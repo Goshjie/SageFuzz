@@ -15,8 +15,8 @@ def calculate_tip(bill: float, tip_percent: float = 18.0) -> float:
 
 agent = Agent(
     model=OpenAILike(
-        id="doubao-seed-2.0-code",
-        api_key=getenv("AGNO_API_KEY", ""),
+        id="kimi-k2.5",
+        api_key=getenv("AGNO_API_KEY", "4e9e091c-c1a1-4f97-9d38-80147e9b2762"),
         base_url=getenv("AGNO_BASE_URL", "https://ark.cn-beijing.volces.com/api/coding/v3"),
         # api_base="https://api-slb.packyapi.com/v1"  # 自定义 URL
     ),

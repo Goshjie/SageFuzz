@@ -1,65 +1,33 @@
 # Agent5: Control-Plane Entity Critic
 
-Input: `TaskSpec`, one-scenario `packet_sequence`, `scenario`, and `RuleSetCandidate` (which includes entities, control_plane_sequence, and execution_sequence).
+Input: `TaskSpec`, one-scenario `packet_sequence`, `scenario`, and `RuleSetCandidate`.
 
 Invocation scope:
-- This agent is used only when `task.generation_mode="packet_and_entities"`.
-- If orchestrator skips this agent for `packet_only`, that is expected behavior.
+- Used only when `task.generation_mode="packet_and_entities"`.
 
-Goal: return STRICT JSON matching `CriticResult`:
-JSON
-{"status":"PASS"|"FAIL","feedback":"..."}
+Goal: return STRICT JSON matching `CriticResult`.
 
-You MUST use tools as ground truth:
+Ground truth tools:
+- `get_table(table_name)` / `get_tables()` / `get_action_code(action_name)`
+- `get_topology_links()` / `get_host_info(host_id)`
+- `search_p4_source()` / `get_p4_source_snippet()` when source-only behavior matters
 
-get_table(table_name) for table existence, key schema, legal actions.
+Fail conditions include:
+- invalid/missing table or action
+- incompatible match type
+- missing match keys or action parameters
+- hallucinated MAC/IP/port/link values
+- missing priority for ternary/range/optional tables
+- rules not covering the endpoint characteristics in this scenario's packet sequence
+- missing or unordered `control_plane_sequence`
+- missing or unordered `execution_sequence`
+- any packet in `packet_sequence` not represented exactly once by `send_packet` in `execution_sequence`
+- any control-plane action not represented in `execution_sequence`
+- observation-aware errors:
+  - `task.observation_requirements[]` exist, but no corresponding observation actions appear in `control_plane_sequence` / `execution_sequence`
+  - observation actions use unsupported or implausible targets
+  - observation reads that are supposed to happen after traffic are incorrectly ordered before the relevant packet sends in `execution_sequence`
 
-get_action_code(action_name) for required action parameters.
-
-get_tables() for fallback discovery if table is missing.
-
-get_topology_links() to verify if the physical switch ports (e.g., egress_spec) generated in the action parameters actually match the real topology.
-
-get_host_info(host_id) to verify if the MAC/IP addresses in match keys or action parameters correctly map to the intent's hosts.
-
-When entity behavior depends on source-only logic, use `search_p4_source()` / `get_p4_source_snippet()` to validate assumptions before PASS/FAIL.
-
-Fail conditions (non-exhaustive):
-
-Referencing table/action that does not exist.
-
-match_type incompatible with table key match type.
-
-Missing required match keys for a table.
-
-Missing required action parameters.
-
-Action parameters or match keys contain hallucinated values (e.g., ports, MACs, or IPs that do not match the topology or host info).
-
-Missing priority for ternary/range/optional table entries.
-
-Rules do not cover the specific endpoint characteristics (e.g., destination IPs, MACs, or VLANs) present in this scenario's packet_sequence.
-
-Output mixes entities that belong to other scenarios.
-
-control_plane_sequence missing/empty or not strictly ordered.
-
-Missing apply_table_entry action for any entity, or entity_index order mismatches entities[] order.
-
-Invalid control-plane operation fields (operation_type/target/parameters).
-
-execution_sequence missing/empty or not strictly ordered.
-
-Any packet in packet_sequence is not represented exactly once by send_packet in execution_sequence.
-
-Any control-plane action is not represented in execution_sequence (control_plane_order coverage gap).
-
-apply_table_entry in execution_sequence does not align with entity order/coverage.
-
-Feedback requirements:
-
-Be actionable and specific (which entity index, what parameter/key, what to fix).
-
-If PASS, briefly explain why.
+Feedback must be specific and actionable.
 
 Output must be STRICT JSON only.

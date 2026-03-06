@@ -2,15 +2,20 @@ from __future__ import annotations
 
 from pathlib import Path
 from urllib.parse import urlparse
-from typing import List, Tuple
+from typing import Dict, List, Optional, Tuple
+
+from sagefuzz_seedgen.runtime.sqlite_compat import install_sqlite_compat
+
+install_sqlite_compat()
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai.like import OpenAILike
 from agno.models.xai import xAI
 from agno.team import Team
 
 from sagefuzz_seedgen.agents.prompts_loader import load_prompt
-from sagefuzz_seedgen.config import ModelConfig
+from sagefuzz_seedgen.config import AgnoMemoryConfig, ModelConfig
 from sagefuzz_seedgen.tools.control_plane_tools import (
     get_action_code_tool,
     get_table_tool,
@@ -68,8 +73,54 @@ def _build_model(model: ModelConfig) -> OpenAILike:
     )
 
 
+def _build_memory_kwargs(
+    *,
+    memory_cfg: AgnoMemoryConfig,
+    user_id: Optional[str],
+    session_id_prefix: Optional[str],
+) -> Tuple[Optional[SqliteDb], Dict[str, object]]:
+    if not memory_cfg.enabled:
+        return None, {}
+
+    db_path = Path(memory_cfg.db_path)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    db = SqliteDb(db_file=str(db_path))
+
+    session_prefix = session_id_prefix or "seedgen"
+    base_kwargs: Dict[str, object] = {
+        "db": db,
+        "user_id": user_id or memory_cfg.user_id,
+        "update_memory_on_run": memory_cfg.update_memory_on_run,
+        "add_memories_to_context": memory_cfg.add_memories_to_context,
+        "enable_session_summaries": memory_cfg.enable_session_summaries,
+        "add_session_summary_to_context": memory_cfg.add_session_summary_to_context,
+        "metadata": {
+            "memory_backend": "agno.sqlite",
+            "memory_db_path": str(db_path),
+            "memory_scope": "shared_user_memory",
+        },
+    }
+    base_kwargs["session_id_prefix"] = session_prefix
+    return db, base_kwargs
+
+
+def _agent_kwargs(base_kwargs: Dict[str, object], agent_key: str) -> Dict[str, object]:
+    if not base_kwargs:
+        return {}
+    session_prefix = str(base_kwargs["session_id_prefix"])
+    kwargs = dict(base_kwargs)
+    kwargs.pop("session_id_prefix", None)
+    kwargs["session_id"] = f"{session_prefix}:{agent_key}"
+    return kwargs
+
+
 def build_agents_and_team(
-    *, model_cfg: ModelConfig, prompts_dir: Path
+    *,
+    model_cfg: ModelConfig,
+    prompts_dir: Path,
+    memory_cfg: Optional[AgnoMemoryConfig] = None,
+    memory_user_id: Optional[str] = None,
+    session_id_prefix: Optional[str] = None,
 ) -> Tuple[Agent, Agent, Agent, Agent, Agent, Agent, Team]:
     shared = load_prompt(prompts_dir, "shared_contract.md")
     a1_prompt = shared + "\n\n" + load_prompt(prompts_dir, "agent1_semantic_analyzer.md")
@@ -108,6 +159,12 @@ def build_agents_and_team(
     ]
 
     model = _build_model(model_cfg)
+    effective_memory_cfg = memory_cfg or AgnoMemoryConfig()
+    db, memory_kwargs = _build_memory_kwargs(
+        memory_cfg=effective_memory_cfg,
+        user_id=memory_user_id,
+        session_id_prefix=session_id_prefix,
+    )
 
     agent1 = Agent(
         name="Semantic Analyzer",
@@ -117,6 +174,7 @@ def build_agents_and_team(
         tools=tools,
         markdown=False,
         use_json_mode=True,
+        **_agent_kwargs(memory_kwargs, "agent1"),
     )
 
     agent2 = Agent(
@@ -127,6 +185,7 @@ def build_agents_and_team(
         tools=tools,
         markdown=False,
         use_json_mode=True,
+        **_agent_kwargs(memory_kwargs, "agent2"),
     )
 
     agent3 = Agent(
@@ -137,6 +196,7 @@ def build_agents_and_team(
         tools=tools,
         markdown=False,
         use_json_mode=True,
+        **_agent_kwargs(memory_kwargs, "agent3"),
     )
 
     agent4 = Agent(
@@ -147,6 +207,7 @@ def build_agents_and_team(
         tools=tools,
         markdown=False,
         use_json_mode=True,
+        **_agent_kwargs(memory_kwargs, "agent4"),
     )
 
     agent5 = Agent(
@@ -157,6 +218,7 @@ def build_agents_and_team(
         tools=tools,
         markdown=False,
         use_json_mode=True,
+        **_agent_kwargs(memory_kwargs, "agent5"),
     )
 
     agent6 = Agent(
@@ -167,6 +229,7 @@ def build_agents_and_team(
         tools=tools,
         markdown=False,
         use_json_mode=True,
+        **_agent_kwargs(memory_kwargs, "agent6"),
     )
 
     team = Team(
@@ -177,6 +240,19 @@ def build_agents_and_team(
         add_team_history_to_members=True,
         num_team_history_runs=3,
         markdown=False,
+        **(
+            {
+                "db": db,
+                "user_id": memory_user_id or effective_memory_cfg.user_id,
+                "session_id": f"{session_id_prefix or 'seedgen'}:team",
+                "update_memory_on_run": effective_memory_cfg.update_memory_on_run,
+                "add_memories_to_context": effective_memory_cfg.add_memories_to_context,
+                "enable_session_summaries": effective_memory_cfg.enable_session_summaries,
+                "add_session_summary_to_context": effective_memory_cfg.add_session_summary_to_context,
+            }
+            if db is not None
+            else {}
+        ),
     )
 
     return agent1, agent2, agent3, agent4, agent5, agent6, team

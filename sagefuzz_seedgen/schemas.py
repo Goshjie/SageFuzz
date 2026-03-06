@@ -22,11 +22,46 @@ class UserIntent(BaseModel):
             "(internal/external/DMZ) and who is allowed to initiate vs. only reply."
         ),
     )
+    topology_mapping: Optional[str] = Field(
+        None,
+        description=(
+            "Compatibility alias for topology description in non-zone scenarios "
+            "(e.g., link-monitoring paths/subnets/VLAN grouping)."
+        ),
+    )
     role_policy: Optional[str] = Field(
         None,
         description=(
             "Natural-language policy for communication roles, e.g. initiator/responder constraints "
             "or directionality expectations."
+        ),
+    )
+    observation_target: Optional[str] = Field(
+        None,
+        description=(
+            "Optional observation target/resource for telemetry-style intents, e.g. a path, link, port, "
+            "counter, register, or monitored flow."
+        ),
+    )
+    observation_method: Optional[str] = Field(
+        None,
+        description=(
+            "Optional observation method, e.g. controller reads register/counter after traffic or expects "
+            "an in-band monitoring report."
+        ),
+    )
+    expected_observation: Optional[str] = Field(
+        None,
+        description=(
+            "Optional expected monitoring result, e.g. link utilization increases on the selected link, "
+            "or a counter/register value changes after traffic."
+        ),
+    )
+    traffic_pattern: Optional[str] = Field(
+        None,
+        description=(
+            "Optional description of traffic stimulus intensity/pattern, e.g. repeated UDP packets, background "
+            "flow plus probe packets, or a sustained stream between endpoints."
         ),
     )
     preferred_role_bindings: Optional[Dict[str, str]] = Field(
@@ -53,7 +88,12 @@ class UserQuestion(BaseModel):
         "feature_under_test",
         "intent_text",
         "topology_zone_mapping",
+        "topology_mapping",
         "role_policy",
+        "observation_target",
+        "observation_method",
+        "expected_observation",
+        "traffic_pattern",
         "preferred_role_bindings",
         "include_negative_case",
         "test_objective",
@@ -65,6 +105,23 @@ class UserQuestion(BaseModel):
     )
 
 
+class ObservationIntentSpec(BaseModel):
+    order: int = Field(..., ge=1, description="1-based order of observation requirement within the task.")
+    action_type: Literal["read_register", "read_counter", "read_meter", "custom"] = Field(
+        ...,
+        description="Observation action requested by the intent.",
+    )
+    target_hint: str = Field(
+        ...,
+        description="Program-level target hint, e.g. register/counter/link/path identifier or observation object.",
+    )
+    timing: Literal["before_traffic", "after_each_packet", "after_scenario", "custom"] = Field(
+        "after_scenario",
+        description="When the observation should happen relative to generated traffic.",
+    )
+    purpose: str = Field(..., description="Why this observation is needed for the test intent.")
+
+
 class TaskSpec(BaseModel):
     """High-level packet generation task produced by Semantic Analyzer.
 
@@ -74,6 +131,40 @@ class TaskSpec(BaseModel):
     task_id: str = Field(..., description="Stable id for this task.")
     task_description: str = Field(..., description="Human readable intent.")
     feature_under_test: str = Field(..., description="What functionality to test (carried from user intent).")
+    intent_category: Literal[
+        "generic",
+        "stateful_policy",
+        "stateless_policy",
+        "telemetry_monitoring",
+        "state_observation",
+        "path_validation",
+        "forwarding_behavior",
+        "load_distribution",
+        "replication_multicast",
+    ] = Field(
+        "generic",
+        description="High-level intent category inferred from user intent and tool evidence.",
+    )
+    observation_focus: Optional[str] = Field(
+        None,
+        description="What should be observed for telemetry/state-validation intents, e.g. a monitored link or counter.",
+    )
+    observation_method: Optional[str] = Field(
+        None,
+        description="How the observation is expected to be obtained, e.g. read_register/read_counter/controller check.",
+    )
+    expected_observation_semantics: Optional[str] = Field(
+        None,
+        description="Intent-level expected observation result, e.g. monitored link utilization increases after traffic.",
+    )
+    observation_requirements: List[ObservationIntentSpec] = Field(
+        default_factory=list,
+        description="Structured observation actions implied by the test intent.",
+    )
+    traffic_pattern: Optional[str] = Field(
+        None,
+        description="Traffic stimulus pattern needed to drive the intent, e.g. repeated probes or sustained flow.",
+    )
     role_bindings: Dict[str, str] = Field(
         default_factory=dict,
         description=(
@@ -115,6 +206,20 @@ class PacketStepSpec(BaseModel):
         default_factory=list,
         description='Expected protocol stack for this step, e.g. ["Ethernet","IPv4","TCP"].',
     )
+    repeat_count: int = Field(
+        1,
+        ge=1,
+        description=(
+            "How many packets should be generated for this logical step. Use values >1 for bursts or sustained traffic "
+            "without enumerating every packet as a separate step."
+        ),
+    )
+    traffic_profile: Optional[str] = Field(
+        None,
+        description=(
+            "Optional traffic profile hint for this step, e.g. sustained_udp_stream, repeated_probe, or burst_traffic."
+        ),
+    )
     field_expectations: Dict[str, Any] = Field(
         default_factory=dict,
         description=(
@@ -142,6 +247,14 @@ class SequenceScenarioSpec(BaseModel):
         description="Scenario kind used for high-level coverage checks.",
     )
     required: bool = Field(True, description="Whether this scenario must appear in packet_sequence.")
+    scenario_goal: Optional[str] = Field(
+        None,
+        description="Intent-level goal of this scenario, e.g. establish state, drive counter growth, or verify drop.",
+    )
+    expected_observation: Optional[str] = Field(
+        None,
+        description="Scenario-level expected observation, especially for telemetry/monitoring tests.",
+    )
     steps: List[PacketStepSpec] = Field(
         default_factory=list,
         description="Ordered packet-step expectations for this scenario.",
@@ -194,6 +307,7 @@ class ControlPlaneOperation(BaseModel):
         "read_register",
         "write_register",
         "read_counter",
+        "read_meter",
         "custom",
     ] = Field(..., description="Controller-side operation kind.")
     target: str = Field(..., description="Target object name, e.g. table/register/counter identifier.")
@@ -220,6 +334,7 @@ class ExecutionOperation(BaseModel):
         "read_register",
         "write_register",
         "read_counter",
+        "read_meter",
         "custom",
     ] = Field(..., description="Unified operation type spanning packet/control-plane actions.")
     packet_id: Optional[int] = Field(None, description="Referenced packet id for send_packet operations.")

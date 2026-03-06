@@ -134,89 +134,104 @@ def _validate_scenario_contract(
     if not scenario_packets:
         return None
 
-    if len(scenario_packets) < len(contract.steps):
+    min_packets = sum(max(1, int(getattr(step, "repeat_count", 1))) for step in contract.steps)
+    if len(scenario_packets) < min_packets:
         return CriticResult(
             status="FAIL",
             feedback=(
                 f"Scenario '{contract.scenario}' has {len(scenario_packets)} packet(s), "
-                f"but contract requires at least {len(contract.steps)} step(s)."
+                f"but contract requires at least {min_packets} packet(s) based on repeat_count."
             ),
         )
-    if not contract.allow_additional_packets and len(scenario_packets) != len(contract.steps):
+    if not contract.allow_additional_packets and len(scenario_packets) != min_packets:
         return CriticResult(
             status="FAIL",
             feedback=(
-                f"Scenario '{contract.scenario}' must have exactly {len(contract.steps)} packet(s); "
+                f"Scenario '{contract.scenario}' must have exactly {min_packets} packet(s); "
                 f"got {len(scenario_packets)}."
             ),
         )
 
+    scenario_index = 0
     for idx, step in enumerate(contract.steps, 1):
-        packet = scenario_packets[idx - 1]
+        repeat_count = max(1, int(getattr(step, "repeat_count", 1)))
+        step_packets = scenario_packets[scenario_index : scenario_index + repeat_count]
+        if len(step_packets) < repeat_count:
+            return CriticResult(
+                status="FAIL",
+                feedback=(
+                    f"Scenario '{contract.scenario}' step {idx} requires {repeat_count} packet(s), "
+                    f"but only {len(step_packets)} packet(s) are available."
+                ),
+            )
+        packet = step_packets[0]
         expected_tx_host = role_bindings.get(step.tx_role)
         if expected_tx_host is None:
             return CriticResult(
                 status="FAIL",
                 feedback=f"Scenario '{contract.scenario}' step {idx}: unknown tx_role '{step.tx_role}'.",
             )
-        if packet.tx_host != expected_tx_host:
-            return CriticResult(
-                status="FAIL",
-                feedback=(
-                    f"Scenario '{contract.scenario}' step {idx}: tx_host must be "
-                    f"'{expected_tx_host}' for role '{step.tx_role}', got '{packet.tx_host}'."
-                ),
-            )
-
-        if step.protocol_stack and packet.protocol_stack != step.protocol_stack:
-            return CriticResult(
-                status="FAIL",
-                feedback=(
-                    f"Scenario '{contract.scenario}' step {idx}: protocol_stack mismatch; "
-                    f"expected {step.protocol_stack}, got {packet.protocol_stack}."
-                ),
-            )
-
-        if step.rx_role:
-            expected_rx_host = role_bindings.get(step.rx_role)
-            if expected_rx_host is None:
-                return CriticResult(
-                    status="FAIL",
-                    feedback=f"Scenario '{contract.scenario}' step {idx}: unknown rx_role '{step.rx_role}'.",
-                )
-            host_info = ctx.host_info.get(expected_rx_host, {})
-            expected_ip = _normalize_ipv4(host_info.get("ip"))
-            packet_dst_ip = _normalize_ipv4(packet.fields.get("IPv4.dst"))
-            if expected_ip and packet_dst_ip and packet_dst_ip != expected_ip:
+        for repeat_offset, step_packet in enumerate(step_packets, 1):
+            if step.protocol_stack and step_packet.protocol_stack != step.protocol_stack:
                 return CriticResult(
                     status="FAIL",
                     feedback=(
-                        f"Scenario '{contract.scenario}' step {idx}: IPv4.dst must target role "
-                        f"'{step.rx_role}' host '{expected_rx_host}' ({expected_ip}); got '{packet_dst_ip}'."
+                        f"Scenario '{contract.scenario}' step {idx} packet {repeat_offset}: protocol_stack mismatch; "
+                        f"expected {step.protocol_stack}, got {step_packet.protocol_stack}."
                     ),
                 )
-            expected_mac = host_info.get("mac")
-            packet_dst_mac = packet.fields.get("Ethernet.dst")
-            if isinstance(expected_mac, str) and isinstance(packet_dst_mac, str):
-                if packet_dst_mac.lower() != expected_mac.lower():
+
+            if step_packet.tx_host != expected_tx_host:
+                return CriticResult(
+                    status="FAIL",
+                    feedback=(
+                        f"Scenario '{contract.scenario}' step {idx} packet {repeat_offset}: tx_host must be "
+                        f"'{expected_tx_host}' for role '{step.tx_role}', got '{step_packet.tx_host}'."
+                    ),
+                )
+
+            if step.rx_role:
+                expected_rx_host = role_bindings.get(step.rx_role)
+                if expected_rx_host is None:
+                    return CriticResult(
+                        status="FAIL",
+                        feedback=f"Scenario '{contract.scenario}' step {idx}: unknown rx_role '{step.rx_role}'.",
+                    )
+                host_info = ctx.host_info.get(expected_rx_host, {})
+                expected_ip = _normalize_ipv4(host_info.get("ip"))
+                packet_dst_ip = _normalize_ipv4(step_packet.fields.get("IPv4.dst"))
+                if expected_ip and packet_dst_ip and packet_dst_ip != expected_ip:
                     return CriticResult(
                         status="FAIL",
                         feedback=(
-                            f"Scenario '{contract.scenario}' step {idx}: Ethernet.dst must target role "
-                            f"'{step.rx_role}' host '{expected_rx_host}' ({expected_mac}); got '{packet_dst_mac}'."
+                            f"Scenario '{contract.scenario}' step {idx} packet {repeat_offset}: IPv4.dst must target role "
+                            f"'{step.rx_role}' host '{expected_rx_host}' ({expected_ip}); got '{packet_dst_ip}'."
+                        ),
+                    )
+                expected_mac = host_info.get("mac")
+                packet_dst_mac = step_packet.fields.get("Ethernet.dst")
+                if isinstance(expected_mac, str) and isinstance(packet_dst_mac, str):
+                    if packet_dst_mac.lower() != expected_mac.lower():
+                        return CriticResult(
+                            status="FAIL",
+                            feedback=(
+                                f"Scenario '{contract.scenario}' step {idx} packet {repeat_offset}: Ethernet.dst must target role "
+                                f"'{step.rx_role}' host '{expected_rx_host}' ({expected_mac}); got '{packet_dst_mac}'."
+                            ),
+                        )
+
+            for field, expected in step.field_expectations.items():
+                actual = step_packet.fields.get(field)
+                if not _expectation_matches(actual, expected):
+                    return CriticResult(
+                        status="FAIL",
+                        feedback=(
+                            f"Scenario '{contract.scenario}' step {idx} packet {repeat_offset}: field '{field}' violates expectation; "
+                            f"actual={actual!r}, expected={expected!r}."
                         ),
                     )
 
-        for field, expected in step.field_expectations.items():
-            actual = packet.fields.get(field)
-            if not _expectation_matches(actual, expected):
-                return CriticResult(
-                    status="FAIL",
-                    feedback=(
-                        f"Scenario '{contract.scenario}' step {idx}: field '{field}' violates expectation; "
-                        f"actual={actual!r}, expected={expected!r}."
-                    ),
-                )
+        scenario_index += repeat_count
 
     for relation in contract.field_relations:
         if relation.left_step > len(scenario_packets) or relation.right_step > len(scenario_packets):

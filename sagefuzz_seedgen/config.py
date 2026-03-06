@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import getenv
 from pathlib import Path
 from typing import Optional
@@ -55,9 +55,21 @@ class ProgramPaths:
 
 
 @dataclass(frozen=True)
+class AgnoMemoryConfig:
+    enabled: bool = True
+    db_path: Path = field(default_factory=lambda: Path("runs/agno_memory.db"))
+    user_id: str = "sagefuzz-local-user"
+    update_memory_on_run: bool = True
+    add_memories_to_context: bool = True
+    enable_session_summaries: bool = False
+    add_session_summary_to_context: bool = False
+
+
+@dataclass(frozen=True)
 class RunConfig:
     program: ProgramPaths
     model: Optional[ModelConfig]
+    memory: AgnoMemoryConfig = field(default_factory=AgnoMemoryConfig)
     # Raw user intent dictionary; parsed/validated by workflow.
     user_intent: Optional[dict] = None
     max_retries: int = 4
