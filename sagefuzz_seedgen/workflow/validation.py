@@ -346,7 +346,15 @@ def validate_packet_sequence_contract(
 
     if not task.role_bindings:
         return CriticResult(status="FAIL", feedback="task.role_bindings is empty.")
+    referenced_roles = set()
+    for contract in task.sequence_contract:
+        for step in contract.steps:
+            referenced_roles.add(step.tx_role)
+            if step.rx_role:
+                referenced_roles.add(step.rx_role)
     for role, host_id in task.role_bindings.items():
+        if role not in referenced_roles:
+            continue
         if host_id not in ctx.host_info:
             return CriticResult(
                 status="FAIL",
@@ -591,8 +599,16 @@ def validate_control_plane_entities(
 
     if not task.role_bindings:
         return CriticResult(status="FAIL", feedback="task.role_bindings is empty.")
+    referenced_roles = set()
+    for contract in task.sequence_contract:
+        for step in contract.steps:
+            referenced_roles.add(step.tx_role)
+            if step.rx_role:
+                referenced_roles.add(step.rx_role)
     missing_role_hosts = sorted(
-        f"{role}:{host_id}" for role, host_id in task.role_bindings.items() if host_id not in ctx.host_info
+        f"{role}:{host_id}"
+        for role, host_id in task.role_bindings.items()
+        if role in referenced_roles and host_id not in ctx.host_info
     )
     if missing_role_hosts:
         return CriticResult(

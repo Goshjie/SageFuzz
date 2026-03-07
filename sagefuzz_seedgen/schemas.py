@@ -169,6 +169,47 @@ class OperatorActionSpec(BaseModel):
     parameters: Dict[str, Any] = Field(default_factory=dict, description="Parameters for the manual action.")
     expected_effect: Optional[str] = Field(None, description="What effect this action should have before packets are sent.")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_operator_action(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        out = dict(value)
+        if "action_type" not in out and isinstance(out.get("operation"), str):
+            op = out.get("operation")
+            mapping = {
+                "fail_link": "manual_link_event",
+                "manual_link_event": "manual_link_event",
+                "notify_controller": "manual_controller_notify",
+                "manual_controller_notify": "manual_controller_notify",
+                "set_threshold": "manual_threshold_override",
+                "manual_threshold_override": "manual_threshold_override",
+            }
+            out["action_type"] = mapping.get(op, "custom")
+        if "timing" not in out and isinstance(out.get("when"), str):
+            out["timing"] = out.get("when")
+        if isinstance(out.get("timing"), str):
+            timing_map = {
+                "after_initial_traffic": "between_scenarios",
+                "after_link_failure": "between_scenarios",
+                "before_test": "before_traffic",
+                "before_packets": "before_traffic",
+            }
+            out["timing"] = timing_map.get(out["timing"], out["timing"])
+        if "target" not in out and isinstance(out.get("link"), str):
+            out["target"] = out.get("link")
+        if "target" not in out and isinstance(out.get("resource"), str):
+            out["target"] = out.get("resource")
+        if "order" not in out:
+            out["order"] = 1
+        if "parameters" not in out or not isinstance(out.get("parameters"), dict):
+            params = {}
+            for key in ("new_value", "link_id", "affected_link", "trigger_reconvergence"):
+                if key in out:
+                    params[key] = out[key]
+            out["parameters"] = params
+        return out
+
 
 class TaskSpec(BaseModel):
     """High-level packet generation task produced by Semantic Analyzer.
