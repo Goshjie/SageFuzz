@@ -4,7 +4,7 @@ Goal: output STRICT JSON matching `OraclePredictionCandidate`.
 
 You MUST:
 - Be generic: do not hardcode firewall-only or TCP-only logic.
-- Use `task.role_bindings`, `task.sequence_contract`, `task.intent_category`, `task.observation_focus`, `task.observation_method`, `task.expected_observation_semantics`, and tool evidence as the source of truth.
+- Use `task.role_bindings`, `task.sequence_contract`, `task.intent_category`, `task.observation_focus`, `task.observation_method`, `task.expected_observation_semantics`, `task.operator_actions`, and tool evidence as the source of truth.
 - For telemetry/query packets, ground your prediction on the actual parser/source-defined packet format; do not reason from an invented generic query packet if the program uses custom probe headers.
 - Call relevant tools (e.g. `get_stateful_objects()`, `get_topology_links()`) if you need to confirm state or reachability.
 - When packet outcomes depend on source-level conditions not explicit in entities, use `search_p4_source()` and `get_p4_source_snippet()`.
@@ -38,3 +38,7 @@ Examples of acceptable telemetry-style observation wording:
 Keep `rationale` short and evidence-driven. Use `assumptions[]` conservatively when exact target/index/value cannot be proven.
 
 Output must be STRICT JSON only.
+
+Operator-action awareness:
+- If `task.operator_actions[]` contains a manual link event, threshold override, or controller notify, incorporate that assumed environment change into the oracle timeline.
+- Distinguish pre-action and post-action behavior when the scenario depends on such manual setup.

@@ -13,7 +13,7 @@ Critical rules:
    - `fields` keys use flattened style that matches header definitions, e.g. `Ethernet.src`, `IPv4.dst`, `TCP.flags`, `UDP.dport`, `VLAN.vid`.
    - `tx_host` must be a valid topology host id.
 5. Intent-to-contract rule:
-   - Packet-generation/critique policy is defined by `TaskSpec.role_bindings`, `TaskSpec.sequence_contract`, and when present: `TaskSpec.intent_category`, `TaskSpec.observation_focus`, `TaskSpec.observation_method`, `TaskSpec.expected_observation_semantics`, `TaskSpec.observation_requirements`, and `TaskSpec.traffic_pattern`.
+   - Packet-generation/critique policy is defined by `TaskSpec.role_bindings`, `TaskSpec.sequence_contract`, and when present: `TaskSpec.intent_category`, `TaskSpec.observation_focus`, `TaskSpec.observation_method`, `TaskSpec.expected_observation_semantics`, `TaskSpec.operator_actions`, `TaskSpec.observation_requirements`, and `TaskSpec.traffic_pattern`.
    - Do NOT hardcode protocol choreography (e.g., TCP three-way handshake, ICMP echo/reply) unless strictly required by `sequence_contract` or tool evidence.
    - If contract and packet_sequence conflict, contract is the source of truth.
    - Scenario completeness must strictly match intent semantics and program statefulness:
@@ -40,6 +40,7 @@ Critical rules:
    - `match_type` must align with table key definition; ternary/range/optional entries require `priority`.
    - `control_plane_sequence[]` must be explicit, ordered, and machine-consumable.
    - `execution_sequence[]` must be a unified global timeline across packet sends and controller-side actions.
+   - Manual/operator setup actions (e.g. lower threshold, fail link, notify controller) should be represented as `custom` operations when the intent requires them.
    - If telemetry/state observation requires register/counter/meter reads, represent them explicitly using `read_register`, `read_counter`, or `read_meter` operations.
    - If observation happens after traffic, place those read operations after the relevant `send_packet` steps in `execution_sequence`.
 10. Oracle prediction contract:

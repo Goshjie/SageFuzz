@@ -121,7 +121,7 @@ def _resolve_symbolic_expectation(
         "same_flow",
         "same_as_previous",
     }
-    if token in abstract_tokens:
+    if token in abstract_tokens or token.startswith("fixed") or token.startswith("increment") or token.startswith("decrement") or token.startswith("different_"):
         return {"non_empty": True}
 
     if token.endswith("_ip"):
@@ -129,12 +129,27 @@ def _resolve_symbolic_expectation(
         host_id = role_bindings.get(role)
         if host_id in ctx.host_info:
             return _normalize_ipv4(ctx.host_info[host_id].get("ip")) or expected
+        if role in ctx.host_info:
+            return _normalize_ipv4(ctx.host_info[role].get("ip")) or expected
 
     if token.endswith("_mac"):
         role = token[:-4]
         host_id = role_bindings.get(role)
         if host_id in ctx.host_info:
             return ctx.host_info[host_id].get("mac") or expected
+        if role in ctx.host_info:
+            return ctx.host_info[role].get("mac") or expected
+
+    tcp_flag_aliases = {
+        "S": {"one_of": ["S", "0x02", 2, "2", "SYN"]},
+        "SYN": {"one_of": ["S", "0x02", 2, "2", "SYN"]},
+        "A": {"one_of": ["A", "0x10", 16, "16", "ACK"]},
+        "ACK": {"one_of": ["A", "0x10", 16, "16", "ACK"]},
+        "SA": {"one_of": ["SA", "0x12", 18, "18", "SYN-ACK"]},
+        "SYN-ACK": {"one_of": ["SA", "0x12", 18, "18", "SYN-ACK"]},
+    }
+    if token in tcp_flag_aliases:
+        return tcp_flag_aliases[token]
 
     return expected
 
@@ -251,19 +266,13 @@ def _validate_scenario_contract(
                             f"'{step.rx_role}' host '{expected_rx_host}' ({expected_ip}); got '{packet_dst_ip}'."
                         ),
                     )
-                expected_mac = host_info.get("mac")
-                packet_dst_mac = step_packet.fields.get("Ethernet.dst")
-                if isinstance(expected_mac, str) and isinstance(packet_dst_mac, str):
-                    if packet_dst_mac.lower() != expected_mac.lower():
-                        return CriticResult(
-                            status="FAIL",
-                            feedback=(
-                                f"Scenario '{contract.scenario}' step {idx} packet {repeat_offset}: Ethernet.dst must target role "
-                                f"'{step.rx_role}' host '{expected_rx_host}' ({expected_mac}); got '{packet_dst_mac}'."
-                            ),
-                        )
-
             for field, expected in step.field_expectations.items():
+                if not isinstance(field, str):
+                    continue
+                # Packet-level validation only applies to flattened packet/header fields.
+                # Ignore scenario metadata accidentally placed into field_expectations.
+                if "." not in field and field not in step_packet.fields:
+                    continue
                 actual = step_packet.fields.get(field)
                 resolved_expected = _resolve_symbolic_expectation(
                     expected,

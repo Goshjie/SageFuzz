@@ -5,6 +5,27 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
+def _normalize_operation_dict(item: Any) -> Any:
+    if not isinstance(item, dict):
+        return item
+    out = dict(item)
+    if "operation_type" not in out and isinstance(out.get("operation"), str):
+        op = str(out.get("operation"))
+        mapping = {"table_add": "apply_table_entry", "add_entry": "apply_table_entry"}
+        out["operation_type"] = mapping.get(op, op)
+    elif isinstance(out.get("operation_type"), str):
+        mapping = {"table_add": "apply_table_entry", "add_entry": "apply_table_entry"}
+        out["operation_type"] = mapping.get(out["operation_type"], out["operation_type"])
+    if "order" not in out and isinstance(out.get("step"), int):
+        out["order"] = out.get("step")
+    entity_index = out.get("entity_index")
+    if isinstance(entity_index, int) and entity_index <= 0:
+        out["entity_index"] = None
+    if out.get("parameters") is None:
+        out["parameters"] = {}
+    return out
+
+
 class UserIntent(BaseModel):
     """User-provided intent for this run.
 
@@ -64,6 +85,13 @@ class UserIntent(BaseModel):
             "flow plus probe packets, or a sustained stream between endpoints."
         ),
     )
+    operator_constraints: Optional[str] = Field(
+        None,
+        description=(
+            "Optional human/operator actions allowed or required before traffic, e.g. lower a threshold, fail a link, "
+            "or notify a controller."
+        ),
+    )
     preferred_role_bindings: Optional[Dict[str, str]] = Field(
         None,
         description="Optional role->host preference map, e.g. {'initiator':'h2','responder':'h3'}.",
@@ -94,6 +122,7 @@ class UserQuestion(BaseModel):
         "observation_method",
         "expected_observation",
         "traffic_pattern",
+        "operator_constraints",
         "preferred_role_bindings",
         "include_negative_case",
         "test_objective",
@@ -120,6 +149,25 @@ class ObservationIntentSpec(BaseModel):
         description="When the observation should happen relative to generated traffic.",
     )
     purpose: str = Field(..., description="Why this observation is needed for the test intent.")
+
+
+class OperatorActionSpec(BaseModel):
+    order: int = Field(..., ge=1, description="1-based order of operator/manual action within the task.")
+    action_type: Literal["manual_threshold_override", "manual_link_event", "manual_controller_notify", "custom"] = Field(
+        ...,
+        description="Type of operator/manual action required before or during testcase execution.",
+    )
+    timing: Literal["before_traffic", "between_scenarios", "after_traffic", "custom"] = Field(
+        "before_traffic",
+        description="When the operator action should occur.",
+    )
+    scenario: Optional[str] = Field(
+        None,
+        description="Optional scenario this action applies to. Null means task-wide.",
+    )
+    target: str = Field(..., description="Target resource or object, e.g. threshold, link, or controller command.")
+    parameters: Dict[str, Any] = Field(default_factory=dict, description="Parameters for the manual action.")
+    expected_effect: Optional[str] = Field(None, description="What effect this action should have before packets are sent.")
 
 
 class TaskSpec(BaseModel):
@@ -156,6 +204,10 @@ class TaskSpec(BaseModel):
     expected_observation_semantics: Optional[str] = Field(
         None,
         description="Intent-level expected observation result, e.g. monitored link utilization increases after traffic.",
+    )
+    operator_actions: List[Any] = Field(
+        default_factory=list,
+        description="Ordered manual/operator actions needed before or during testcase execution.",
     )
     observation_requirements: List[Any] = Field(
         default_factory=list,
@@ -195,6 +247,17 @@ class TaskSpec(BaseModel):
             "Supports full names (e.g., MyIngress.check_ports) and short names (e.g., check_ports)."
         ),
     )
+
+    @field_validator("operator_actions")
+    @classmethod
+    def _validate_operator_actions(cls, value: List[Any]) -> List[OperatorActionSpec]:
+        out: List[OperatorActionSpec] = []
+        for item in value:
+            try:
+                out.append(item if isinstance(item, OperatorActionSpec) else OperatorActionSpec.model_validate(item))
+            except Exception:
+                continue
+        return out
 
     @field_validator("observation_requirements")
     @classmethod
@@ -306,6 +369,20 @@ class SequenceScenarioSpec(BaseModel):
         True, description="If false, packet count in this scenario must equal len(steps)."
     )
 
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _normalize_kind(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        token = value.strip().lower()
+        mapping = {
+            "required_positive": "positive",
+            "positive_required": "positive",
+            "required_negative": "negative",
+            "negative_required": "negative",
+        }
+        return mapping.get(token, token)
+
     @field_validator("steps")
     @classmethod
     def _validate_steps(cls, value: List[Any]) -> List[PacketStepSpec]:
@@ -332,6 +409,29 @@ class PacketSpec(BaseModel):
     protocol_stack: List[str] = Field(..., description='E.g. ["Ethernet","IPv4","TCP"]')
     fields: Dict[str, Any] = Field(..., description="Flattened header fields.")
 
+    @model_validator(mode="after")
+    def _normalize_field_aliases(self) -> "PacketSpec":
+        aliases = {
+            "IPv4.srcAddr": "IPv4.src",
+            "IPv4.dstAddr": "IPv4.dst",
+            "IPv4.protocol": "IPv4.proto",
+            "IPv4.tos": "IPv4.diffserv",
+            "TCP.srcPort": "TCP.sport",
+            "TCP.dstPort": "TCP.dport",
+            "TCP.seqNo": "TCP.seq",
+            "TCP.ackNo": "TCP.ack",
+            "TCP.res": "TCP.reserved",
+            "UDP.srcPort": "UDP.sport",
+            "UDP.dstPort": "UDP.dport",
+            "UDP.length": "UDP.len",
+        }
+        normalized = dict(self.fields)
+        for src, dst in aliases.items():
+            if src in normalized and dst not in normalized:
+                normalized[dst] = normalized[src]
+        self.fields = normalized
+        return self
+
 
 class CriticResult(BaseModel):
     status: Literal["PASS", "FAIL"]
@@ -356,6 +456,21 @@ class PacketSequenceCandidate(BaseModel):
                     packet_copy = dict(packet)
                     packet_copy.setdefault("scenario", scenario)
                     packet_copy.setdefault("packet_id", next_packet_id)
+                    flattened.append(packet_copy)
+                    next_packet_id += 1
+                continue
+            if isinstance(item, dict) and isinstance(item.get("repeat_count"), int) and item.get("repeat_count", 1) > 1 and all(k in item for k in ("tx_host", "protocol_stack", "fields")):
+                repeat_count = int(item.get("repeat_count", 1))
+                scenario = item.get("scenario")
+                base_fields = dict(item.get("fields", {})) if isinstance(item.get("fields", {}), dict) else {}
+                for _ in range(repeat_count):
+                    packet_copy = {
+                        "packet_id": next_packet_id,
+                        "tx_host": item.get("tx_host"),
+                        "scenario": scenario,
+                        "protocol_stack": item.get("protocol_stack"),
+                        "fields": dict(base_fields),
+                    }
                     flattened.append(packet_copy)
                     next_packet_id += 1
                 continue
@@ -453,15 +568,17 @@ class RuleSetCandidate(BaseModel):
     @field_validator("control_plane_sequence")
     @classmethod
     def _validate_control_plane_sequence(cls, value: List[Any]) -> List[ControlPlaneOperation]:
+        normalized_items = [_normalize_operation_dict(item) for item in value]
         return [
             item if isinstance(item, ControlPlaneOperation) else ControlPlaneOperation.model_validate(item)
-            for item in value
+            for item in normalized_items
         ]
 
     @field_validator("execution_sequence")
     @classmethod
     def _validate_execution_sequence(cls, value: List[Any]) -> List[ExecutionOperation]:
-        return [item if isinstance(item, ExecutionOperation) else ExecutionOperation.model_validate(item) for item in value]
+        normalized_items = [_normalize_operation_dict(item) for item in value]
+        return [item if isinstance(item, ExecutionOperation) else ExecutionOperation.model_validate(item) for item in normalized_items]
 
 
 class OraclePacketPrediction(BaseModel):

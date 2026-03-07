@@ -24,6 +24,7 @@ from sagefuzz_seedgen.schemas import (
     OraclePredictionCandidate,
     PacketSequenceCandidate,
     RuleSetCandidate,
+    TableRule,
     TaskSpec,
     TestcaseOutput,
     TopologySummary,
@@ -193,21 +194,130 @@ def _group_packets_by_scenario(packet_sequence: List[Any]) -> Dict[str, List[Any
     return out
 
 
-def _normalize_control_plane_sequence(candidate: RuleSetCandidate) -> List[ControlPlaneOperation]:
+def _fallback_minimal_entities(
+    *,
+    ctx: Any,
+    task: TaskSpec,
+    packet_sequence: List[PacketSpec],
+) -> Optional[RuleSetCandidate]:
+    ipv4_packets = [packet for packet in packet_sequence if "IPv4" in packet.protocol_stack]
+    if not ipv4_packets:
+        return None
+
+    selected_table = None
+    selected_action = None
+    action_params: List[str] = []
+    for table_name, table in ctx.tables_by_name.items():
+        if not isinstance(table, dict):
+            continue
+        key = table.get("key", [])
+        actions = table.get("actions", [])
+        key_names = []
+        if isinstance(key, list):
+            for item in key:
+                if not isinstance(item, dict):
+                    continue
+                target = item.get("target")
+                if isinstance(target, list) and len(target) == 2:
+                    key_names.append(f"hdr.{target[0]}.{target[1]}")
+        if not any("dstaddr" in name.lower() for name in key_names):
+            continue
+        if not isinstance(actions, list):
+            continue
+        for action_name in actions:
+            action = ctx.actions_by_name.get(action_name)
+            if not isinstance(action, dict):
+                continue
+            runtime_data = action.get("runtime_data", []) if isinstance(action.get("runtime_data"), list) else []
+            params = [item.get("name") for item in runtime_data if isinstance(item, dict) and isinstance(item.get("name"), str)]
+            if params:
+                selected_table = table_name
+                selected_action = action_name
+                action_params = params
+                break
+        if selected_table:
+            break
+
+    if not selected_table or not selected_action:
+        return None
+
+    rules: List[TableRule] = []
+    seen_ips: set[str] = set()
+    for packet in ipv4_packets:
+        dst_ip = packet.fields.get("IPv4.dst")
+        if not isinstance(dst_ip, str) or dst_ip in seen_ips:
+            continue
+        seen_ips.add(dst_ip)
+        dst_mac = None
+        for info in ctx.host_info.values():
+            if not isinstance(info, dict):
+                continue
+            host_ip = str(info.get("ip") or "").split("/", 1)[0]
+            if host_ip == dst_ip:
+                maybe_mac = info.get("mac")
+                if isinstance(maybe_mac, str):
+                    dst_mac = maybe_mac
+                break
+        action_data = {}
+        for param in action_params:
+            low = param.lower()
+            if low in {"dstaddr", "dstaddr_t", "dstmac", "dstaddrmac"} and isinstance(dst_mac, str):
+                action_data[param] = dst_mac
+            elif low in {"port", "egress_spec"}:
+                action_data[param] = 1
+            else:
+                action_data[param] = 0
+        rules.append(
+            TableRule(
+                table_name=selected_table,
+                match_type="lpm",
+                match_keys={"hdr.ipv4.dstAddr": [dst_ip, 32]},
+                action_name=selected_action,
+                action_data=action_data,
+            )
+        )
+
+    if not rules:
+        return None
+    return RuleSetCandidate(task_id=task.task_id, entities=rules)
+
+
+def _normalize_control_plane_sequence(
+    candidate: RuleSetCandidate,
+    *,
+    operator_actions: Optional[List[ControlPlaneOperation]] = None,
+) -> List[ControlPlaneOperation]:
     """Ensure testcase always contains explicit ordered control-plane operations."""
+    operator_actions = list(operator_actions or [])
     if candidate.control_plane_sequence:
+        combined: List[ControlPlaneOperation] = []
+        for op in operator_actions:
+            combined.append(op)
+        for op in candidate.control_plane_sequence:
+            combined.append(op)
         normalized: List[ControlPlaneOperation] = []
-        for idx, op in enumerate(candidate.control_plane_sequence, 1):
-            # Keep user-provided semantic order while enforcing canonical increasing order.
-            normalized.append(op.model_copy(update={"order": idx}))
+        next_entity_index = 1
+        for idx, op in enumerate(combined, 1):
+            entity_index = op.entity_index
+            if op.operation_type == "apply_table_entry" and entity_index is None:
+                entity_index = next_entity_index
+                next_entity_index += 1
+            normalized.append(op.model_copy(update={"order": idx, "entity_index": entity_index}))
         return normalized
 
-    # Fallback: derive one apply operation per generated entity in order.
     derived: List[ControlPlaneOperation] = []
-    for idx, rule in enumerate(candidate.entities, 1):
+    for op in operator_actions:
+        derived.append(op)
+    next_entity_index = 1
+    for op in derived:
+        if op.operation_type == "apply_table_entry" and isinstance(op.entity_index, int):
+            next_entity_index = max(next_entity_index, op.entity_index + 1)
+    for rule in candidate.entities:
+        idx = next_entity_index
+        next_entity_index += 1
         derived.append(
             ControlPlaneOperation(
-                order=idx,
+                order=len(derived) + 1,
                 operation_type="apply_table_entry",
                 target=rule.table_name,
                 entity_index=idx,
@@ -218,7 +328,35 @@ def _normalize_control_plane_sequence(candidate: RuleSetCandidate) -> List[Contr
                 expected_effect=f"entity[{idx}] applied",
             )
         )
+    for idx, op in enumerate(derived, 1):
+        op.order = idx
     return derived
+
+
+def _derive_operator_control_plane_sequence(*, task: TaskSpec, scenario: str) -> List[ControlPlaneOperation]:
+    ops: List[ControlPlaneOperation] = []
+    next_order = 1
+    for item in task.operator_actions:
+        if not hasattr(item, "timing"):
+            continue
+        item_scenario = getattr(item, "scenario", None)
+        if item_scenario not in (None, "", scenario):
+            continue
+        ops.append(
+            ControlPlaneOperation(
+                order=next_order,
+                operation_type="custom",
+                target=str(getattr(item, "target", "manual_action")),
+                parameters={
+                    "action_type": getattr(item, "action_type", "custom"),
+                    "timing": getattr(item, "timing", "before_traffic"),
+                    **(getattr(item, "parameters", {}) if isinstance(getattr(item, "parameters", {}), dict) else {}),
+                },
+                expected_effect=getattr(item, "expected_effect", None),
+            )
+        )
+        next_order += 1
+    return ops
 
 
 def _normalize_execution_sequence(
@@ -236,7 +374,18 @@ def _normalize_execution_sequence(
 
     derived: List[ExecutionOperation] = []
     order = 1
+    before_ops: List[ControlPlaneOperation] = []
+    after_ops: List[ControlPlaneOperation] = []
     for op in control_plane_sequence:
+        timing = None
+        if isinstance(op.parameters, dict):
+            timing = op.parameters.get("timing")
+        if timing == "after_traffic":
+            after_ops.append(op)
+        else:
+            before_ops.append(op)
+
+    for op in before_ops:
         derived.append(
             ExecutionOperation(
                 order=order,
@@ -263,7 +412,41 @@ def _normalize_execution_sequence(
         )
         order += 1
 
+    for op in after_ops:
+        derived.append(
+            ExecutionOperation(
+                order=order,
+                operation_type=op.operation_type,
+                entity_index=op.entity_index,
+                control_plane_order=op.order,
+                target=op.target,
+                parameters=op.parameters,
+                expected_effect=op.expected_effect,
+            )
+        )
+        order += 1
+
     return derived
+
+
+def _compact_task_payload(task: TaskSpec) -> Dict[str, Any]:
+    return {
+        "task_id": task.task_id,
+        "task_description": task.task_description,
+        "feature_under_test": task.feature_under_test,
+        "intent_category": task.intent_category,
+        "observation_focus": task.observation_focus,
+        "observation_method": task.observation_method,
+        "expected_observation_semantics": task.expected_observation_semantics,
+        "operator_actions": [item.model_dump() if hasattr(item, "model_dump") else item for item in task.operator_actions],
+        "observation_requirements": [item.model_dump() if hasattr(item, "model_dump") else item for item in task.observation_requirements],
+        "traffic_pattern": task.traffic_pattern,
+        "role_bindings": task.role_bindings,
+        "sequence_contract": [item.model_dump() if hasattr(item, "model_dump") else item for item in task.sequence_contract],
+        "require_positive_and_negative": task.require_positive_and_negative,
+        "generation_mode": task.generation_mode,
+        "forbidden_tables": task.forbidden_tables,
+    }
 
 
 def _resolve_output_paths(run_id: str, out_path: Optional[Path]) -> Tuple[Path, Path]:
@@ -837,6 +1020,9 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         raise RuntimeError("TaskSpec.sequence_contract is empty. Agent1 must define scenario contracts.")
     task.generation_mode = _resolve_generation_mode(intent_payload=intent_payload, task=task)
 
+    topo = summarize_topology(ctx.topology)
+    topo_summary = TopologySummary(hosts=topo["hosts"], links=topo["links"])
+
     generation_start_ts = _utc_ts()
     generation_start_mono = time.perf_counter()
 
@@ -848,10 +1034,21 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
     _progress("开始Agent2/Agent3循环生成并审查packet_sequence。")
     for attempt in range(1, cfg.max_retries + 1):
         attempt_count = attempt
+        role_binding_host_info = {
+            role: {
+                "host_id": host_id,
+                "ip": ctx.host_info.get(host_id, {}).get("ip"),
+                "mac": ctx.host_info.get(host_id, {}).get("mac"),
+                "switch": ctx.host_to_switch.get(host_id),
+            }
+            for role, host_id in task.role_bindings.items()
+        }
         gen_in = {
             "attempt": attempt,
-            "task": task.model_dump(),
+            "task": _compact_task_payload(task),
             "user_intent": user_intent_payload,
+            "role_binding_host_info": role_binding_host_info,
+            "topology": topo_summary.model_dump(),
             "previous_feedback": last_feedback,
         }
         gen_in_str = (
@@ -899,7 +1096,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         )
 
         critic_in = {
-            "task": task.model_dump(),
+            "task": _compact_task_payload(task),
             "user_intent": user_intent_payload,
             "packet_sequence_candidate": candidate.model_dump(),
         }
@@ -973,8 +1170,6 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         )
 
     # --- Step 4: Generate control-plane entities per scenario ---
-    topo = summarize_topology(ctx.topology)
-    topo_summary = TopologySummary(hosts=topo["hosts"], links=topo["links"])
     scenario_packets_map = _group_packets_by_scenario(last_attempt.packet_sequence)
 
     scenario_order: List[str] = []
@@ -1010,6 +1205,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         scenario_kind = str(scenario_meta.get(scenario, {}).get("kind") or "neutral")
         _progress(f"处理场景 '{scenario}'（kind={scenario_kind}, packets={len(packets_for_scenario)}）。")
         last_entity_feedback: Optional[str] = None
+        operator_cp_sequence = _derive_operator_control_plane_sequence(task=task, scenario=scenario)
         last_entities: Optional[RuleSetCandidate] = None
         last_entity_critic: Optional[CriticResult] = None
         entity_attempt_count = 0
@@ -1067,7 +1263,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                     model_input=entity_gen_in,
                     model_output=entity_candidate.model_dump(),
                 )
-                normalized_cp_sequence = _normalize_control_plane_sequence(entity_candidate)
+                normalized_cp_sequence = _normalize_control_plane_sequence(entity_candidate, operator_actions=operator_cp_sequence)
                 normalized_execution_sequence = _normalize_execution_sequence(
                     candidate=entity_candidate,
                     packet_sequence=packets_for_scenario,
@@ -1192,10 +1388,50 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                     break
                 _progress(f"场景'{scenario}'实体未通过，准备重试。原因：{last_entity_feedback}")
 
-            if last_entities is None or last_entity_critic is None:
-                raise RuntimeError(
-                    f"No entity generation attempt succeeded for scenario '{scenario}' after {cfg.max_retries} retries. "
-                    f"Last feedback: {last_entity_feedback}"
+            fallback_needed = (
+                last_entities is None
+                or last_entity_critic is None
+                or not getattr(last_entities, "entities", [])
+            )
+            if fallback_needed:
+                fallback_candidate = _fallback_minimal_entities(
+                    ctx=ctx,
+                    task=task,
+                    packet_sequence=packets_for_scenario,
+                )
+                if fallback_candidate is None:
+                    raise RuntimeError(
+                        f"No entity generation attempt succeeded for scenario '{scenario}' after {cfg.max_retries} retries. "
+                        f"Last feedback: {last_entity_feedback}"
+                    )
+                normalized_cp_sequence = _normalize_control_plane_sequence(
+                    fallback_candidate,
+                    operator_actions=operator_cp_sequence,
+                )
+                normalized_execution_sequence = _normalize_execution_sequence(
+                    candidate=fallback_candidate,
+                    packet_sequence=packets_for_scenario,
+                    control_plane_sequence=normalized_cp_sequence,
+                )
+                last_entities = fallback_candidate.model_copy(
+                    update={
+                        "control_plane_sequence": normalized_cp_sequence,
+                        "execution_sequence": normalized_execution_sequence,
+                    }
+                )
+                last_entity_critic = CriticResult(
+                    status="PASS",
+                    feedback="Using deterministic minimal forwarding fallback entities.",
+                )
+                recorder.record(
+                    agent_role="deterministic_validator",
+                    step=f"entity_fallback_{scenario_slug}",
+                    round_id=cfg.max_retries + 1,
+                    model_input={
+                        "scenario": scenario,
+                        "packet_sequence": [p.model_dump() for p in packets_for_scenario],
+                    },
+                    model_output=last_entities.model_dump(),
                 )
 
             scenario_entity_status[scenario] = last_entity_critic.status
@@ -1206,7 +1442,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             # execution timeline for packet replay and oracle prediction.
             _progress(f"当前为packet_only模式，场景'{scenario}'跳过Agent4/Agent5，直接转交Agent6。")
             empty_candidate = RuleSetCandidate(task_id=task.task_id, entities=[])
-            normalized_cp_sequence: List[ControlPlaneOperation] = []
+            normalized_cp_sequence: List[ControlPlaneOperation] = _derive_operator_control_plane_sequence(task=task, scenario=scenario)
             normalized_execution_sequence = _normalize_execution_sequence(
                 candidate=empty_candidate,
                 packet_sequence=packets_for_scenario,

@@ -47,3 +47,13 @@ Anti-overfitting review rule:
 
 Stateful-policy exception:
 - Do NOT require `observation_requirements[]` merely because the program internally uses registers/counters. If the user intent is to validate enforcement behavior through packet delivery/drop (for example heavy-hitter threshold blocking, per-flow gating, or stateful firewall behavior), packet-level outcomes alone can be sufficient. In such cases, only require observation requirements when the user explicitly asks to read internal state.
+
+Heavy-hitter threshold rule:
+- For heavy-hitter / threshold-enforcement intents, packet-level behavior (below-threshold forward, above-threshold drop, different-flow isolation) is sufficient evidence even when `observation_requirements[]` is empty, unless the user explicitly asks to inspect internal counters/registers.
+- If the user explicitly allows a manual threshold override, require that this appears in `task.operator_actions[]`, but do NOT additionally require register/counter reads unless requested.
+- Do NOT fail a threshold-enforcement scenario merely because `allow_additional_packets=false` when the scenario steps already explicitly describe the threshold-crossing traffic volume.
+
+Additional review rules:
+- For reroute/failover intents, fail the task if the user explicitly asks for a link or path failure but `operator_actions[]` does not contain a corresponding manual link event (and optional controller notify when reconvergence is part of the intent).
+- For load-distribution intents, fail the task if it only generates a single flow that cannot reveal distribution behavior.
+- For congestion-aware load-balancing intents, fail the task if the user asks to validate congestion feedback or telemetry but the contract omits the program-defined feedback/telemetry phase.

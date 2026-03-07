@@ -1,7 +1,7 @@
 import unittest
 from pathlib import Path
 
-from sagefuzz_seedgen.schemas import Agent1Output, ObservationIntentSpec, PacketSpec, TaskSpec, UserQuestion
+from sagefuzz_seedgen.schemas import Agent1Output, ObservationIntentSpec, OperatorActionSpec, PacketSpec, TaskSpec, UserQuestion
 from sagefuzz_seedgen.workflow.packet_sequence_workflow import (
     _apply_initial_intent_answer,
     _coerce_schema_output,
@@ -135,6 +135,26 @@ class TestWorkflowOutputCoercion(unittest.TestCase):
         )
         self.assertEqual(task.intent_category, "telemetry_monitoring")
         self.assertEqual(task.observation_requirements[0].action_type, "read_counter")
+
+    def test_task_spec_accepts_operator_actions(self) -> None:
+        task = TaskSpec(
+            task_id="t-op",
+            task_description="manual threshold setup",
+            feature_under_test="heavy_hitter_detection",
+            intent_category="stateful_policy",
+            operator_actions=[
+                OperatorActionSpec(
+                    order=1,
+                    action_type="manual_threshold_override",
+                    timing="before_traffic",
+                    target="PACKET_THRESHOLD",
+                    parameters={"new_value": 10},
+                    expected_effect="threshold lowered before traffic",
+                )
+            ],
+            role_bindings={"sender": "h1", "receiver": "h2"},
+        )
+        self.assertEqual(task.operator_actions[0].action_type, "manual_threshold_override")
 
     def test_user_question_accepts_topology_mapping_alias(self) -> None:
         q = UserQuestion(

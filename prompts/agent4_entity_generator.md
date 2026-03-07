@@ -30,3 +30,31 @@ Observation-aware requirements:
 Output constraints:
 - Return only STRICT JSON for `RuleSetCandidate`.
 - Do not add commentary or markdown.
+
+Manual/operator actions:
+- If `task.operator_actions[]` is non-empty, preserve them by emitting corresponding `custom` control-plane operations and by placing them in `execution_sequence` according to their timing.
+
+STRICT schema-key contract for Agent4:
+- `RuleSetCandidate` top level may contain ONLY: `task_id`, `entities`, `control_plane_sequence`, `execution_sequence`.
+- `control_plane_sequence[]` items must use current `ControlPlaneOperation` keys exactly:
+  - `order`
+  - `operation_type`
+  - `target`
+  - `parameters`
+  - `entity_index`
+  - `expected_effect`
+- `execution_sequence[]` items must use current `ExecutionOperation` keys exactly:
+  - `order`
+  - `operation_type`
+  - `packet_id`
+  - `entity_index`
+  - `control_plane_order`
+  - `target`
+  - `parameters`
+  - `expected_effect`
+- Do NOT output legacy keys such as `operation`, `step`, `type`, `entity_ref`, or free-form action wrappers.
+- For manual/operator actions, use `operation_type="custom"` and place timing/details inside `parameters`.
+
+Baseline forwarding rule:
+- If the scenario uses ordinary IPv4/TCP/UDP host-to-host traffic and the program contains a forwarding table (for example `ipv4_lpm`), you MUST generate the minimal baseline forwarding entries required for packets to reach the destination host.
+- Do not return `entities=[]` merely because the feature under test is a stateful policy or threshold mechanism; if forwarding state is required to reach that mechanism, include the necessary forwarding rules first.

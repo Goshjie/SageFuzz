@@ -47,6 +47,7 @@ STRICT schema-key contract for Agent1 (very important):
   - `observation_focus`
   - `observation_method`
   - `expected_observation_semantics`
+  - `operator_actions`
   - `observation_requirements`
   - `traffic_pattern`
 - `SequenceScenarioSpec` must use these keys:
@@ -85,6 +86,7 @@ Task construction requirements:
   - `observation_focus`
   - `observation_method`
   - `expected_observation_semantics`
+  - `operator_actions[]` when manual/environment actions are needed
   - `observation_requirements[]`
   - `traffic_pattern`
 - `observation_requirements[]` should be structured and machine-friendly. Example styles:
@@ -127,3 +129,32 @@ Output must be STRICT JSON only.
 
 Additional anti-overfitting rule:
 - If the intent is about forwarding correctness, ECMP/load split, multicast replication, or similar data-plane behavior, do NOT force the task into policy or telemetry framing. Pick the more direct intent_category and role semantics for that behavior.
+
+Operator/manual action rule:
+- If the user intent can be made significantly easier and more observable by a human-performed setup action, represent that setup in `task.operator_actions[]`.
+- Examples:
+  - Lower a heavy-hitter threshold to a test-friendly value before sending packets.
+  - Fail a specific switch-to-switch link before a reroute scenario.
+  - Notify the controller after a failure to trigger reconvergence.
+- Use operator actions only when they are justified by the program behavior and user intent; do not invent unnecessary setup.
+
+Operator-actions schema reminder:
+- `task.operator_actions[]` items must use the current `OperatorActionSpec` keys exactly:
+  - `order`
+  - `action_type`
+  - `timing`
+  - `scenario`
+  - `target`
+  - `parameters`
+  - `expected_effect`
+- For a human threshold change before traffic, prefer:
+  - `action_type": "manual_threshold_override"`
+  - `timing": "before_traffic"`
+  - `target": "PACKET_THRESHOLD"` (or the program-specific threshold symbol if known)
+  - `parameters": {"new_value": 10}`
+
+
+Program-family examples:
+- Fast reroute / LFA intents usually map to `path_validation` or `forwarding_behavior` plus `operator_actions[]` such as `manual_link_event` and optionally `manual_controller_notify`.
+- Congestion-aware load balancing usually maps to `load_distribution` or `telemetry_monitoring` depending on whether the user focuses on path spreading, queue telemetry, or congestion feedback.
+- Heavy hitter detection usually maps to `stateful_policy` where packet delivery/drop across a threshold can be enough evidence, especially if the user explicitly allows a manual threshold override.
