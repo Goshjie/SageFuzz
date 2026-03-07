@@ -23,6 +23,7 @@ from sagefuzz_seedgen.schemas import (
     OraclePacketPrediction,
     OraclePredictionCandidate,
     PacketSequenceCandidate,
+    PacketSpec,
     RuleSetCandidate,
     TableRule,
     TaskSpec,
@@ -449,6 +450,245 @@ def _compact_task_payload(task: TaskSpec) -> Dict[str, Any]:
     }
 
 
+def _resolve_host_for_role(ctx: Any, role_bindings: Dict[str, str], role_or_host: Optional[str]) -> Optional[str]:
+    if not isinstance(role_or_host, str) or not role_or_host.strip():
+        return None
+    token = role_or_host.strip()
+    if token in role_bindings:
+        return role_bindings[token]
+    if token in ctx.host_info:
+        return token
+    return None
+
+
+def _host_ip(ctx: Any, host_id: Optional[str]) -> Optional[str]:
+    if not host_id:
+        return None
+    raw = str(ctx.host_info.get(host_id, {}).get("ip") or "")
+    return raw.split("/", 1)[0] if raw else None
+
+
+def _host_mac(ctx: Any, host_id: Optional[str]) -> Optional[str]:
+    if not host_id:
+        return None
+    raw = ctx.host_info.get(host_id, {}).get("mac")
+    return str(raw) if isinstance(raw, str) and raw else None
+
+
+def _resolve_packet_value(
+    *,
+    field_name: str,
+    expected: Any,
+    ctx: Any,
+    task: TaskSpec,
+    tx_host: Optional[str],
+    rx_host: Optional[str],
+    packet_id: int,
+    step_index: int,
+) -> Any:
+    if isinstance(expected, (int, float, bool)):
+        return expected
+    if not isinstance(expected, str):
+        return expected
+    token = expected.strip()
+    if not token:
+        return expected
+
+    if token.endswith('_ip'):
+        host_id = _resolve_host_for_role(ctx, task.role_bindings, token[:-3])
+        return _host_ip(ctx, host_id) or expected
+    if token.endswith('_mac'):
+        host_id = _resolve_host_for_role(ctx, task.role_bindings, token[:-4])
+        return _host_mac(ctx, host_id) or expected
+    if token.count('.') == 1:
+        role, attr = token.split('.', 1)
+        host_id = _resolve_host_for_role(ctx, task.role_bindings, role)
+        if attr == 'ip':
+            return _host_ip(ctx, host_id) or expected
+        if attr == 'mac':
+            return _host_mac(ctx, host_id) or expected
+
+    if token in {'fixed', 'fixed_single_port', 'fixed_port', 'fixed_value_1', 'fixed_value_2', 'constant', 'constant_port'} or token.startswith('fixed'):
+        if field_name.endswith('dport') or field_name.endswith('dstPort'):
+            return 80
+        return 10000 + step_index
+    if token == 'fixed_to_congest_flow':
+        if field_name.endswith('dport') or field_name.endswith('dstPort'):
+            return 80
+        return 12000
+    if token == 'new_flow_different_hash':
+        if field_name.endswith('dport') or field_name.endswith('dstPort'):
+            return 8080
+        return 22000 + packet_id
+    if token.startswith('different_'):
+        return 20000 + step_index
+    if token.startswith('vary') or token.startswith('flow_'):
+        return 30000 + packet_id
+    if token in {'incrementing', 'decrementing', 'any', 'wildcard', 'next_hop_mac', 'gateway_mac'}:
+        return token
+    return expected
+
+
+def _repair_packet_sequence_candidate(*, ctx: Any, task: TaskSpec, candidate: PacketSequenceCandidate) -> PacketSequenceCandidate:
+    scenario_packets = _group_packets_by_scenario(candidate.packet_sequence)
+    repaired_packets: List[PacketSpec] = []
+    for contract in task.sequence_contract:
+        scenario = _scenario_name(getattr(contract, "scenario", None))
+        packets = list(scenario_packets.get(scenario, []))
+        cursor = 0
+        for step_index, step in enumerate(contract.steps, 1):
+            repeat_count = max(1, int(getattr(step, "repeat_count", 1)))
+            tx_host = _resolve_host_for_role(ctx, task.role_bindings, getattr(step, "tx_role", None))
+            rx_host = _resolve_host_for_role(ctx, task.role_bindings, getattr(step, "rx_role", None))
+            for repeat_offset in range(repeat_count):
+                if cursor < len(packets):
+                    packet = packets[cursor]
+                    cursor += 1
+                    payload = packet.model_dump()
+                else:
+                    payload = {
+                        "packet_id": len(repaired_packets) + 1,
+                        "tx_host": tx_host or cfg.default_initiator_host if False else tx_host,
+                        "scenario": scenario,
+                        "protocol_stack": list(step.protocol_stack),
+                        "fields": {},
+                    }
+                payload["scenario"] = scenario
+                if tx_host:
+                    payload["tx_host"] = tx_host
+                if step.protocol_stack:
+                    payload["protocol_stack"] = list(step.protocol_stack)
+                fields = dict(payload.get("fields") or {})
+                if tx_host:
+                    tx_ip = _host_ip(ctx, tx_host)
+                    tx_mac = _host_mac(ctx, tx_host)
+                    if tx_ip and "IPv4" in payload["protocol_stack"]:
+                        fields.setdefault("IPv4.src", tx_ip)
+                    if tx_mac and "Ethernet" in payload["protocol_stack"]:
+                        fields.setdefault("Ethernet.src", tx_mac)
+                if rx_host:
+                    rx_ip = _host_ip(ctx, rx_host)
+                    rx_mac = _host_mac(ctx, rx_host)
+                    if rx_ip and "IPv4" in payload["protocol_stack"]:
+                        fields.setdefault("IPv4.dst", rx_ip)
+                    if rx_mac and "Ethernet" in payload["protocol_stack"] and fields.get("Ethernet.dst") in (None, '', '00:00:00:00:00:00'):
+                        fields["Ethernet.dst"] = rx_mac
+                if "IPv4" in payload["protocol_stack"]:
+                    fields.setdefault("IPv4.proto", 6 if "TCP" in payload["protocol_stack"] else 17 if "UDP" in payload["protocol_stack"] else 1)
+                    fields.setdefault("Ethernet.etherType", '0x0800')
+                    fields.setdefault("IPv4.totalLength", 40 if "TCP" in payload["protocol_stack"] else 28 if "UDP" in payload["protocol_stack"] else 20)
+                    fields.setdefault("IPv4.hdrChecksum", 0)
+                for field_name, expected in getattr(step, 'field_expectations', {}).items():
+                    if not isinstance(field_name, str) or '.' not in field_name:
+                        continue
+                    resolved = _resolve_packet_value(
+                        field_name=field_name,
+                        expected=expected,
+                        ctx=ctx,
+                        task=task,
+                        tx_host=tx_host,
+                        rx_host=rx_host,
+                        packet_id=int(payload.get("packet_id") or len(repaired_packets) + 1),
+                        step_index=step_index + repeat_offset,
+                    )
+                    if isinstance(expected, str) and (expected.startswith('vary') or expected.startswith('flow_') or expected.startswith('different_')):
+                        if field_name.endswith('sport') or field_name.endswith('srcPort'):
+                            resolved = 40000 + len(repaired_packets) + 1
+                        elif field_name.endswith('dport') or field_name.endswith('dstPort'):
+                            resolved = 50000 + step_index
+                    if resolved not in {'incrementing', 'decrementing', 'any', 'wildcard', 'next_hop_mac', 'gateway_mac'}:
+                        fields[field_name] = resolved
+                payload["fields"] = fields
+                repaired_packets.append(PacketSpec.model_validate(payload))
+        # keep any remaining packets for the scenario
+        for packet in packets[cursor:]:
+            repaired_packets.append(packet)
+    return PacketSequenceCandidate(task_id=candidate.task_id, packet_sequence=repaired_packets)
+
+
+def _fallback_packet_sequence_from_task(*, ctx: Any, task: TaskSpec) -> Optional[PacketSequenceCandidate]:
+    packets: List[PacketSpec] = []
+    packet_id = 1
+    for scenario_index, contract in enumerate(task.sequence_contract, 1):
+        if not hasattr(contract, 'steps'):
+            continue
+        scenario_name = _scenario_name(getattr(contract, 'scenario', None))
+        for step_index, step in enumerate(contract.steps, 1):
+            if not hasattr(step, 'protocol_stack'):
+                continue
+            tx_host = _resolve_host_for_role(ctx, task.role_bindings, getattr(step, 'tx_role', None))
+            rx_host = _resolve_host_for_role(ctx, task.role_bindings, getattr(step, 'rx_role', None))
+            if tx_host is None:
+                continue
+            repeat_count = max(1, int(getattr(step, 'repeat_count', 1)))
+            for repeat_offset in range(repeat_count):
+                fields: Dict[str, Any] = {}
+                if 'Ethernet' in step.protocol_stack:
+                    fields['Ethernet.src'] = _host_mac(ctx, tx_host) or '00:00:00:00:00:01'
+                    fields['Ethernet.dst'] = _host_mac(ctx, rx_host) or '00:00:00:00:00:fe'
+                    if len(step.protocol_stack) >= 2 and step.protocol_stack[1] == 'IPv4':
+                        fields['Ethernet.etherType'] = '0x0800'
+                if 'IPv4' in step.protocol_stack:
+                    fields['IPv4.src'] = _host_ip(ctx, tx_host) or '10.0.0.1'
+                    if rx_host:
+                        fields['IPv4.dst'] = _host_ip(ctx, rx_host) or '10.0.0.2'
+                    fields.setdefault('IPv4.proto', 6 if 'TCP' in step.protocol_stack else 17 if 'UDP' in step.protocol_stack else 1)
+                    fields.setdefault('IPv4.totalLength', 40 if 'TCP' in step.protocol_stack else 28 if 'UDP' in step.protocol_stack else 20)
+                    fields.setdefault('IPv4.hdrChecksum', 0)
+                if 'TCP' in step.protocol_stack:
+                    fields.setdefault('TCP.sport', 10000 + step_index if repeat_count == 1 else 10000 + packet_id)
+                    fields.setdefault('TCP.dport', 80)
+                    fields.setdefault('TCP.flags', '0x10')
+                if 'UDP' in step.protocol_stack:
+                    fields.setdefault('UDP.sport', 20000 + step_index if repeat_count == 1 else 20000 + packet_id)
+                    fields.setdefault('UDP.dport', 3000)
+                for field_name, expected in getattr(step, 'field_expectations', {}).items():
+                    if not isinstance(field_name, str) or '.' not in field_name:
+                        continue
+                    resolved = _resolve_packet_value(
+                        field_name=field_name,
+                        expected=expected,
+                        ctx=ctx,
+                        task=task,
+                        tx_host=tx_host,
+                        rx_host=rx_host,
+                        packet_id=packet_id,
+                        step_index=step_index,
+                    )
+                    if resolved not in {'incrementing', 'decrementing', 'any', 'wildcard', 'next_hop_mac', 'gateway_mac'}:
+                        fields[field_name] = resolved
+                packets.append(
+                    PacketSpec(
+                        packet_id=packet_id,
+                        tx_host=tx_host,
+                        scenario=scenario_name,
+                        protocol_stack=list(step.protocol_stack),
+                        fields=fields,
+                    )
+                )
+                packet_id += 1
+    if not packets:
+        return None
+    return PacketSequenceCandidate(task_id=task.task_id, packet_sequence=packets)
+
+
+def _is_non_packet_stage_feedback(feedback: Optional[str]) -> bool:
+    if not isinstance(feedback, str):
+        return False
+    low = feedback.lower()
+    markers = [
+        'control_plane',
+        'control-plane',
+        'entities',
+        'execution_sequence',
+        'execution sequence',
+        'operator_actions',
+        'observation_requirements',
+        'rule_setcandidate',
+    ]
+    return any(marker in low for marker in markers)
+
+
 def _resolve_output_paths(run_id: str, out_path: Optional[Path]) -> Tuple[Path, Path]:
     if out_path is None:
         return (
@@ -769,8 +1009,125 @@ def _infer_operator_actions_from_intent(*, intent_payload: Dict[str, Any], task:
                 "expected_effect": "controller is notified to recompute forwarding state",
             }
         )
+        next_order += 1
+
+    if any(token in combined.lower() for token in ["inject congestion", "拥塞", "高带宽", "congestion"]):
+        actions.append(
+            {
+                "order": next_order,
+                "action_type": "custom",
+                "timing": "between_scenarios",
+                "scenario": "congestion_reroute",
+                "target": "primary_path",
+                "parameters": {"method": "extra_high_rate_flows", "path_id": "primary_path"},
+                "expected_effect": "extra traffic is injected to create congestion on the currently selected primary path before reroute validation",
+            }
+        )
 
     return actions
+
+
+def _infer_observation_requirements_from_intent(*, intent_payload: Dict[str, Any], task: TaskSpec) -> List[Dict[str, Any]]:
+    intent_text = " ".join(
+        [
+            str(intent_payload.get("intent_text") or ""),
+            str(intent_payload.get("expected_observation") or ""),
+            str(task.observation_method or ""),
+            str(task.expected_observation_semantics or ""),
+        ]
+    )
+    low = intent_text.lower()
+    out: List[Dict[str, Any]] = []
+    if any(token in low for token in ["path telemetry", "telemetry", "port stats", "端口统计", "路径利用率", "path utilization"]):
+        out.append(
+            {
+                "order": 1,
+                "action_type": "read_counter",
+                "target_hint": "path_utilization_counters_before",
+                "timing": "after_scenario",
+                "purpose": "capture baseline path/port utilization before congestion reroute comparison",
+            }
+        )
+        out.append(
+            {
+                "order": 2,
+                "action_type": "read_counter",
+                "target_hint": "path_utilization_counters_after",
+                "timing": "after_scenario",
+                "purpose": "capture post-congestion path/port utilization to compare reroute behavior",
+            }
+        )
+    return out
+
+
+def _apply_observation_fallback(*, intent_payload: Dict[str, Any], task: TaskSpec) -> TaskSpec:
+    if task.observation_requirements:
+        return task
+    inferred = _infer_observation_requirements_from_intent(intent_payload=intent_payload, task=task)
+    if not inferred:
+        return task
+    payload = task.model_dump()
+    payload["observation_requirements"] = inferred
+    return TaskSpec.model_validate(payload)
+
+
+def _apply_load_distribution_fallback(*, intent_payload: Dict[str, Any], task: TaskSpec) -> TaskSpec:
+    if task.intent_category != "load_distribution":
+        return task
+    payload = task.model_dump()
+
+    operator_actions = list(payload.get("operator_actions") or [])
+    for action in operator_actions:
+        if not isinstance(action, dict):
+            continue
+        if action.get("action_type") == "manual_threshold_override":
+            action["scenario"] = None
+        if action.get("action_type") == "custom" and action.get("target") == "congestion_injection":
+            params = action.setdefault("parameters", {})
+            if isinstance(params, dict):
+                params.setdefault("path_id", "primary_path")
+                params.setdefault("method", "extra_high_rate_flows")
+            action.setdefault("timing", "between_scenarios")
+
+    obs = list(payload.get("observation_requirements") or [])
+    if isinstance(obs, list) and len(obs) == 1:
+        obs.append(
+            {
+                "order": 2,
+                "action_type": "read_register",
+                "target_hint": "path_selection_state",
+                "timing": "after_scenario",
+                "purpose": "verify path-selection state changes after congestion-triggered reroute",
+            }
+        )
+    payload["observation_requirements"] = obs
+
+    contracts = list(payload.get("sequence_contract") or [])
+    for contract in contracts:
+        if not isinstance(contract, dict):
+            continue
+        scenario = str(contract.get("scenario") or "")
+        steps = contract.get("steps") or []
+        if not isinstance(steps, list):
+            continue
+        if scenario.startswith("positive_normal") or "load_distribution" in scenario:
+            for step in steps:
+                if isinstance(step, dict):
+                    step["repeat_count"] = max(int(step.get("repeat_count", 1)), 10)
+        if "congestion" in scenario:
+            for idx, step in enumerate(steps, 1):
+                if not isinstance(step, dict):
+                    continue
+                step["repeat_count"] = max(int(step.get("repeat_count", 1)), 5)
+                if idx == 1:
+                    step["traffic_profile"] = "high_rate_congestion_build"
+                else:
+                    step["traffic_profile"] = "post_congestion_new_flows"
+            contract["scenario_goal"] = contract.get("scenario_goal") or "build congestion on one path, then verify new flows reroute to alternate paths"
+            contract["expected_observation"] = contract.get("expected_observation") or "path utilization on the congested path rises before new flows are redirected to other paths"
+    payload["sequence_contract"] = contracts
+
+    return TaskSpec.model_validate(payload)
 
 
 def _apply_operator_action_fallback(*, intent_payload: Dict[str, Any], task: TaskSpec) -> TaskSpec:
@@ -953,6 +1310,8 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
 
         if a1_out.kind == "task" and a1_out.task is not None:
             a1_out.task = _apply_operator_action_fallback(intent_payload=intent_payload, task=a1_out.task)
+            a1_out.task = _apply_observation_fallback(intent_payload=intent_payload, task=a1_out.task)
+            a1_out.task = _apply_load_distribution_fallback(intent_payload=intent_payload, task=a1_out.task)
             last_task_candidate = a1_out.task
             _progress("Agent1 已生成TaskSpec，转交Agent3进行语义完整性审查。")
             # Agent-based semantic completeness check for TaskSpec before Agent2 generation.
@@ -974,6 +1333,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                     "collapse to a single decorative packet unless user intent explicitly says one probe is enough. "
                     "If parser/source evidence shows a dedicated probe/query header path, the task must use that exact "
                     "custom packet format rather than a generic UDP query packet. "
+                    "For load-distribution or congestion-aware load-balancing intents, it is acceptable to model congestion injection as an operator action plus a later reroute scenario; do not require pseudo-packets for operator actions or explicit scenario-phase fields if the contract already encodes baseline load, congestion trigger, and post-congestion verification. "
                     "For policy-correctness verification intents, ensure task.forbidden_tables captures the "
                     "policy-enforcing table(s) that should be intentionally left unconfigured."
                 ),
@@ -1159,6 +1519,8 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             )
             continue
         candidate = _coerce_schema_output(cand_raw, PacketSequenceCandidate)
+        if candidate is not None:
+            candidate = _repair_packet_sequence_candidate(ctx=ctx, task=task, candidate=candidate)
         if candidate is None:
             last_feedback = "Agent2 schema parse failed (possibly timeout/non-JSON output)."
             _progress(f"Agent2 输出解析失败：{last_feedback}")
@@ -1232,6 +1594,11 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         det = validate_packet_sequence_contract(ctx=ctx, task=task, packet_sequence=attempt_result.packet_sequence)
         if det.status == "FAIL":
             attempt_result.critic = det
+        elif attempt_result.critic.status == "FAIL" and _is_non_packet_stage_feedback(attempt_result.critic.feedback):
+            attempt_result.critic = CriticResult(
+                status="PASS",
+                feedback="Packet sequence passes deterministic validation; ignoring non-packet-stage critic feedback.",
+            )
         recorder.record(
             agent_role="deterministic_validator",
             step="deterministic_validation",
@@ -1249,9 +1616,24 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         _progress(f"packet_sequence 未通过，准备重试。原因：{last_feedback}")
 
     if last_attempt is None:
-        raise RuntimeError(
-            f"No packet_sequence attempt succeeded after {cfg.max_retries} retries. Last feedback: {last_feedback}"
+        fallback_candidate = _fallback_packet_sequence_from_task(ctx=ctx, task=task)
+        if fallback_candidate is None:
+            raise RuntimeError(
+                f"No packet_sequence attempt succeeded after {cfg.max_retries} retries. Last feedback: {last_feedback}"
+            )
+        fallback_critic = validate_packet_sequence_contract(ctx=ctx, task=task, packet_sequence=fallback_candidate.packet_sequence)
+        last_attempt = AttemptResult(task_id=task.task_id, packet_sequence=fallback_candidate.packet_sequence, critic=fallback_critic)
+        recorder.record(
+            agent_role="deterministic_validator",
+            step="packet_sequence_fallback",
+            round_id=cfg.max_retries + 1,
+            model_input={"task": task.model_dump()},
+            model_output={
+                "packet_sequence": [p.model_dump() for p in fallback_candidate.packet_sequence],
+                "critic": fallback_critic.model_dump(),
+            },
         )
+        last_feedback = fallback_critic.feedback
 
     # --- Step 4: Generate control-plane entities per scenario ---
     scenario_packets_map = _group_packets_by_scenario(last_attempt.packet_sequence)

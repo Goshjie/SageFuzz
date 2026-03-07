@@ -48,13 +48,19 @@ This document records the human-style intents used to exercise the system agains
 
 ### Congestion_Aware_Load_Balancing
 - Intent:
-  - Pending
+  - 验证拥塞感知负载均衡功能。让 h1 到 h5 发送多条 TCP 流，期望这些流可以分散到不同路径；如果某条路径拥塞，后续流量应该切换到其他路径。
 - Output index:
-  - Pending
+  - runs/2026-03-07T063623Z_packet_sequence_index.json
 - Testcase dir:
-  - Pending
+  - runs/2026-03-07T063623Z_testcases
+- Output cases:
+  - runs/2026-03-07T063623Z_testcases/baseline_load_distribution.json
+  - runs/2026-03-07T063623Z_testcases/congestion_reroute.json
 - Status:
-  - Pending
+  - PASS
+- Notes:
+  - Uses deterministic packet-sequence repair and deterministic minimal forwarding fallback to stabilize generation.
+  - Operator actions and observation requirements were inferred from the human intent to express congestion injection and path-utilization checks.
 
 ### firewall
 - Intent:

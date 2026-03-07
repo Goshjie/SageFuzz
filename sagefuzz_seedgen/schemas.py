@@ -133,6 +133,38 @@ class UserQuestion(BaseModel):
         None, description="Optional hint, e.g. 'h1' or 'true/false' or 'h1,h2 internal; h3,h4 external'."
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_question(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        out = dict(value)
+        if "question_zh" not in out:
+            for key in ("question", "question_text", "prompt"):
+                if isinstance(out.get(key), str):
+                    out["question_zh"] = out[key]
+                    break
+        if "field" not in out:
+            question_text = str(out.get("question_zh") or "")
+            low = question_text.lower()
+            if any(token in low for token in ["拥塞", "congestion", "阈值", "threshold", "链路断开", "notify", "controller"]):
+                out["field"] = "operator_constraints"
+            elif any(token in low for token in ["观测", "observation", "读取", "query"]):
+                out["field"] = "observation_method"
+            elif any(token in low for token in ["流量模式", "traffic pattern", "持续流", "burst"]):
+                out["field"] = "traffic_pattern"
+            else:
+                out["field"] = "intent_text"
+        if "question_zh" not in out:
+            default_questions = {
+                "operator_constraints": "请补充本次测试需要的人为操作或环境触发条件。",
+                "observation_method": "请补充本次测试希望如何观察和验证结果。",
+                "traffic_pattern": "请补充本次测试的流量模式与强度要求。",
+                "intent_text": "请补充本次测试的完整意图信息。",
+            }
+            out["question_zh"] = default_questions.get(str(out.get("field")), "请补充本次测试所需信息。")
+        return out
+
 
 class ObservationIntentSpec(BaseModel):
     order: int = Field(..., ge=1, description="1-based order of observation requirement within the task.")
@@ -258,7 +290,7 @@ class TaskSpec(BaseModel):
         None,
         description="Traffic stimulus pattern needed to drive the intent, e.g. repeated probes or sustained flow.",
     )
-    role_bindings: Dict[str, str] = Field(
+    role_bindings: Dict[str, Any] = Field(
         default_factory=dict,
         description=(
             "Concrete role-to-host binding used for packet generation/validation, "
@@ -320,9 +352,17 @@ class TaskSpec(BaseModel):
         return out
 
 
+    @field_validator("role_bindings", mode="before")
+    @classmethod
+    def _coerce_role_bindings(cls, value: Any) -> Dict[str, str]:
+        if not isinstance(value, dict):
+            return {}
+        return {str(k): str(v) for k, v in value.items() if isinstance(k, str) and isinstance(v, str)}
+
     @model_validator(mode="after")
     def _normalize_role_bindings(self) -> "TaskSpec":
-        role_bindings = dict(self.role_bindings)
+        role_bindings = {str(k): str(v) for k, v in dict(self.role_bindings).items() if isinstance(k, str) and isinstance(v, str)}
+        self.role_bindings = role_bindings
         if role_bindings and all(isinstance(k, str) and k.startswith("h") and k[1:].isdigit() for k in role_bindings.keys()):
             inverted = {str(v): str(k) for k, v in role_bindings.items() if isinstance(k, str) and isinstance(v, str)}
             if inverted and all(isinstance(host, str) and host.startswith("h") and host[1:].isdigit() for host in inverted.values()):
@@ -501,13 +541,16 @@ class PacketSequenceCandidate(BaseModel):
                     next_packet_id += 1
                 continue
             if isinstance(item, dict) and isinstance(item.get("repeat_count"), int) and item.get("repeat_count", 1) > 1 and all(k in item for k in ("tx_host", "protocol_stack", "fields")):
+                tx_host = item.get("tx_host")
+                if isinstance(tx_host, str) and tx_host.lower() in {"operator", "controller", "manual", "system"}:
+                    continue
                 repeat_count = int(item.get("repeat_count", 1))
                 scenario = item.get("scenario")
                 base_fields = dict(item.get("fields", {})) if isinstance(item.get("fields", {}), dict) else {}
                 for _ in range(repeat_count):
                     packet_copy = {
                         "packet_id": next_packet_id,
-                        "tx_host": item.get("tx_host"),
+                        "tx_host": tx_host,
                         "scenario": scenario,
                         "protocol_stack": item.get("protocol_stack"),
                         "fields": dict(base_fields),
@@ -516,10 +559,15 @@ class PacketSequenceCandidate(BaseModel):
                     next_packet_id += 1
                 continue
             if isinstance(item, PacketSpec):
+                if isinstance(item.tx_host, str) and item.tx_host.lower() in {"operator", "controller", "manual", "system"}:
+                    continue
                 next_packet_id = max(next_packet_id, int(item.packet_id) + 1)
                 flattened.append(item)
                 continue
             if isinstance(item, dict):
+                tx_host = item.get("tx_host")
+                if isinstance(tx_host, str) and tx_host.lower() in {"operator", "controller", "manual", "system"}:
+                    continue
                 packet_copy = dict(item)
                 packet_copy.setdefault("packet_id", next_packet_id)
                 flattened.append(packet_copy)
@@ -663,7 +711,7 @@ class OraclePacketPrediction(BaseModel):
         description="Optional 1-based entities[] index expected to handle this packet.",
     )
     expected_observation: Optional[str] = None
-    rationale: str
+    rationale: str = ""
 
 
 class OraclePredictionCandidate(BaseModel):

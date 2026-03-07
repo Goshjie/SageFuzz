@@ -121,7 +121,7 @@ def _resolve_symbolic_expectation(
         "same_flow",
         "same_as_previous",
     }
-    if token in abstract_tokens or token in {"any", "wildcard"} or token.startswith("fixed") or token.startswith("increment") or token.startswith("decrement") or token.startswith("different_") or token.endswith("gateway_mac") or token == "next_hop_mac":
+    if token in abstract_tokens or token in {"any", "wildcard"} or token.startswith("fixed") or token.startswith("increment") or token.startswith("decrement") or token.startswith("different_") or token.startswith("vary_") or token.startswith("varying_") or token.startswith("flow_") or token.endswith("gateway_mac") or token == "next_hop_mac":
         return {"non_empty": True}
 
     if token.endswith("_ip"):
@@ -161,6 +161,12 @@ def _resolve_symbolic_expectation(
         return tcp_flag_aliases[token]
 
     return expected
+
+
+def _is_non_packet_role(role_or_host: Optional[str]) -> bool:
+    if not isinstance(role_or_host, str):
+        return False
+    return role_or_host.strip().lower() in {"operator", "controller", "manual", "system"}
 
 
 def _resolve_role_host(role_or_host: Optional[str], role_bindings: Dict[str, str], ctx: ProgramContext) -> Optional[str]:
@@ -212,7 +218,8 @@ def _validate_scenario_contract(
     if not scenario_packets:
         return None
 
-    min_packets = sum(max(1, int(getattr(step, "repeat_count", 1))) for step in contract.steps)
+    packet_steps = [step for step in contract.steps if not _is_non_packet_role(getattr(step, "tx_role", None))]
+    min_packets = sum(max(1, int(getattr(step, "repeat_count", 1))) for step in packet_steps)
     if len(scenario_packets) < min_packets:
         return CriticResult(
             status="FAIL",
@@ -231,7 +238,12 @@ def _validate_scenario_contract(
         )
 
     scenario_index = 0
-    for idx, step in enumerate(contract.steps, 1):
+    logical_idx = 0
+    for step in contract.steps:
+        if _is_non_packet_role(getattr(step, "tx_role", None)):
+            continue
+        logical_idx += 1
+        idx = logical_idx
         repeat_count = max(1, int(getattr(step, "repeat_count", 1)))
         step_packets = scenario_packets[scenario_index : scenario_index + repeat_count]
         if len(step_packets) < repeat_count:

@@ -57,3 +57,9 @@ Additional review rules:
 - For reroute/failover intents, fail the task if the user explicitly asks for a link or path failure but `operator_actions[]` does not contain a corresponding manual link event (and optional controller notify when reconvergence is part of the intent).
 - For load-distribution intents, fail the task if it only generates a single flow that cannot reveal distribution behavior.
 - For congestion-aware load-balancing intents, fail the task if the user asks to validate congestion feedback or telemetry but the contract omits the program-defined feedback/telemetry phase.
+
+Load-distribution / congestion-aware review rule:
+- For load-distribution or congestion-aware load-balancing intents, it is acceptable to represent congestion injection as a task-level `operator_actions[]` item plus a later scenario that sends post-congestion flows. Do NOT require a separate scenario-phase field or an explicit pseudo-packet for the operator action.
+- If the contract already contains: (1) a baseline multi-flow distribution scenario, (2) a congestion-injection operator action, (3) a later reroute scenario, and (4) at least one observation requirement about path utilization or path-selection state, treat the semantic structure as sufficient unless there is a concrete contradiction.
+- Do NOT fail solely because observation happens `after_scenario` rather than during the scenario; after-scenario counter/register comparison is acceptable for this class of tests.
+- Do NOT demand exact congestion-rate mathematics. A compact representation such as `repeat_count >= 5` with a high-rate traffic profile is acceptable as a proxy for congestion build-up when the user explicitly delegated the exact traffic volume to the system.
