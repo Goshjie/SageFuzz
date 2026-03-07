@@ -64,20 +64,29 @@ This document records the human-style intents used to exercise the system agains
 
 ### firewall
 - Intent:
-  - Pending refresh in this review cycle
+  - 验证有状态防火墙功能。h1 和 h2 是内部主机，其他是外部主机。要求内部主机主动向外部主机发起连接时允许通信，外部主机主动发起到内部时不允许。
 - Output index:
-  - Pending refresh
+  - runs/2026-03-07T064109Z_packet_sequence_index.json
 - Testcase dir:
-  - Pending refresh
+  - runs/2026-03-07T064109Z_testcases
+- Output cases:
+  - runs/2026-03-07T064109Z_testcases/positive_internal_initiates.json
+  - runs/2026-03-07T064109Z_testcases/negative_external_initiates.json
 - Status:
-  - Previously supported; will be revalidated in this review cycle.
+  - PASS
+- Notes:
+  - Regression revalidated successfully after the generalized multi-program changes.
 
 ### link_monitor
 - Intent:
-  - Pending refresh in this review cycle
+  - 验证链路利用率监控功能。选择 h1 到 h3 通信路径上的任意一条链路作为监控对象，使用程序已有的 probe 探测包从 h1 发送到 h3，配合持续流量至少 20 个包来触发可观测的链路利用率变化。只需要一个正向场景，成功标准是 probe 回包或监控结果中能看到该链路的利用率数值大于 0。
 - Output index:
-  - Pending refresh
+  - runs/2026-03-07T070252Z_packet_sequence_index.json
 - Testcase dir:
-  - Pending refresh
+  - runs/2026-03-07T070252Z_testcases
+- Output cases:
+  - runs/2026-03-07T070252Z_testcases/link_utilization_monitoring_positive.json
 - Status:
-  - Previously supported; will be revalidated in this review cycle.
+  - PASS
+- Notes:
+  - Regression revalidated successfully using the program-defined probe path and probe-response observation semantics.

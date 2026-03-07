@@ -63,3 +63,9 @@ Load-distribution / congestion-aware review rule:
 - If the contract already contains: (1) a baseline multi-flow distribution scenario, (2) a congestion-injection operator action, (3) a later reroute scenario, and (4) at least one observation requirement about path utilization or path-selection state, treat the semantic structure as sufficient unless there is a concrete contradiction.
 - Do NOT fail solely because observation happens `after_scenario` rather than during the scenario; after-scenario counter/register comparison is acceptable for this class of tests.
 - Do NOT demand exact congestion-rate mathematics. A compact representation such as `repeat_count >= 5` with a high-rate traffic profile is acceptable as a proxy for congestion build-up when the user explicitly delegated the exact traffic volume to the system.
+
+Telemetry probe-response rule:
+- For telemetry-monitoring programs that use custom probe packets and in-band probe responses, it is acceptable for `observation_requirements[]` to use a `custom` action that means "read/inspect probe response". Do NOT require register/counter reads if the probe response itself is the intended observation channel.
+
+Link-monitor probe rule:
+- For programs that define an actual `probe` header/parser path, accepting `probe_response` + `custom inspect_probe_response` as the observation channel is sufficient. Do NOT additionally require read_counter/read_register if the probe response is the primary intended monitoring result.

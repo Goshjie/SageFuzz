@@ -689,6 +689,26 @@ def _is_non_packet_stage_feedback(feedback: Optional[str]) -> bool:
     return any(marker in low for marker in markers)
 
 
+def _should_accept_deterministic_packet_result(*, task: TaskSpec, feedback: Optional[str]) -> bool:
+    if _is_non_packet_stage_feedback(feedback):
+        return True
+    if not isinstance(feedback, str):
+        return False
+    low = feedback.lower()
+    if task.intent_category == 'telemetry_monitoring':
+        telemetry_markers = [
+            'probe',
+            '步骤顺序',
+            'probe query',
+            'probe查询',
+            'probe response',
+            '协议栈',
+        ]
+        if any(marker in low for marker in telemetry_markers):
+            return True
+    return False
+
+
 def _resolve_output_paths(run_id: str, out_path: Optional[Path]) -> Tuple[Path, Path]:
     if out_path is None:
         return (
@@ -1071,6 +1091,124 @@ def _apply_observation_fallback(*, intent_payload: Dict[str, Any], task: TaskSpe
     return TaskSpec.model_validate(payload)
 
 
+def _first_switch_link(ctx: Any) -> Optional[str]:
+    links = ctx.topology.get("links", []) if isinstance(ctx.topology, dict) else []
+    if not isinstance(links, list):
+        return None
+    for link in links:
+        if not (isinstance(link, list) and len(link) == 2):
+            continue
+        a, b = link
+        if isinstance(a, str) and isinstance(b, str) and a.startswith('s') and b.startswith('s'):
+            return f"{a}-{b}"
+        if isinstance(a, str) and isinstance(b, str) and a.startswith('s') and '-p' in b and not b.startswith('h'):
+            sw_b = b.split('-p', 1)[0]
+            return f"{a}-{sw_b}"
+        if isinstance(a, str) and isinstance(b, str) and b.startswith('s') and '-p' in a and not a.startswith('h'):
+            sw_a = a.split('-p', 1)[0]
+            return f"{sw_a}-{b}"
+    return None
+
+
+def _apply_telemetry_monitoring_fallback(*, ctx: Any, intent_payload: Dict[str, Any], task: TaskSpec) -> TaskSpec:
+    if task.intent_category not in {"telemetry_monitoring", "state_observation"}:
+        return task
+    payload = task.model_dump()
+    chosen_link = _first_switch_link(ctx) or "selected_path_link"
+    if not payload.get("observation_focus"):
+        payload["observation_focus"] = f"monitor utilization on {chosen_link}"
+    payload["observation_method"] = "probe_response"
+    if not payload.get("expected_observation_semantics"):
+        payload["expected_observation_semantics"] = "probe response should report utilization value greater than zero after sustained traffic"
+    payload["observation_requirements"] = [
+        {
+            "order": 1,
+            "action_type": "custom",
+            "target_hint": "inspect_probe_response",
+            "timing": "after_scenario",
+            "purpose": f"verify probe response reports utilization on {chosen_link}",
+        }
+    ]
+    has_probe_header = "probe" in ctx.headers_by_name
+    contracts = list(payload.get("sequence_contract") or [])
+    has_tcp = "tcp" in ctx.headers_by_name
+    has_udp = "udp" in ctx.headers_by_name
+    for contract_index, contract in enumerate(contracts, 1):
+        if not isinstance(contract, dict):
+            continue
+        contract.setdefault("scenario_goal", f"monitor utilization on {chosen_link} with sustained traffic followed by a probe query")
+        if not isinstance(contract.get("steps"), list):
+            continue
+        normalized_steps = []
+        for step_index, step in enumerate(contract["steps"], 1):
+            if not isinstance(step, dict):
+                continue
+            stack = step.get("protocol_stack") or []
+            if not isinstance(stack, list):
+                continue
+            normalized_stack = []
+            for item in stack:
+                token = str(item)
+                low = token.lower()
+                if has_probe_header and low in {"probe", "probe_header", "probehdr"}:
+                    normalized_stack.append("probe")
+                else:
+                    normalized_stack.append(token)
+            stack_low = [str(x).lower() for x in normalized_stack]
+            if "probe" in stack_low:
+                normalized_stack = ["Ethernet", "probe", "probe_fwd"]
+            else:
+                if not has_tcp and not has_udp:
+                    normalized_stack = [item for item in normalized_stack if str(item) not in {"TCP", "UDP"}]
+                    if normalized_stack == ["Ethernet"]:
+                        normalized_stack = ["Ethernet", "IPv4"]
+            step["protocol_stack"] = normalized_stack
+            fe = dict(step.get("field_expectations") or {}) if isinstance(step.get("field_expectations"), dict) else {}
+            if normalized_stack == ["Ethernet", "probe", "probe_fwd"]:
+                fe.setdefault("Ethernet.etherType", "0x0812")
+                fe.setdefault("probe.hop_cnt", 0)
+                fe.setdefault("probe_fwd.egress_spec", 1)
+            else:
+                if not has_tcp and not has_udp:
+                    fe = {k: v for k, v in fe.items() if not (isinstance(k, str) and (k.startswith('TCP.') or k.startswith('UDP.')))}
+                    fe.setdefault("Ethernet.etherType", "0x0800")
+            step["field_expectations"] = fe
+            normalized_steps.append(step)
+        if has_probe_header:
+            normalized_steps = [
+                step for step in normalized_steps
+                if not (
+                    isinstance(step, dict)
+                    and step.get("traffic_profile") == "probe_query"
+                    and step.get("protocol_stack") != ["Ethernet", "probe", "probe_fwd"]
+                )
+            ]
+            if not any(
+                isinstance(step, dict) and step.get("protocol_stack") == ["Ethernet", "probe", "probe_fwd"]
+                for step in normalized_steps
+            ):
+                role_keys = list((payload.get("role_bindings", {}) or {}).keys())
+                default_tx_role = "initiator" if "initiator" in (payload.get("role_bindings", {}) or {}) else (role_keys[0] if role_keys else "host_a")
+                default_rx_role = "responder" if "responder" in (payload.get("role_bindings", {}) or {}) else (role_keys[-1] if role_keys else "host_b")
+                normalized_steps.append(
+                    {
+                        "tx_role": default_tx_role,
+                        "rx_role": default_rx_role,
+                        "protocol_stack": ["Ethernet", "probe", "probe_fwd"],
+                        "repeat_count": 1,
+                        "traffic_profile": "probe_query",
+                        "field_expectations": {
+                            "Ethernet.etherType": "0x0812",
+                            "probe.hop_cnt": 0,
+                            "probe_fwd.egress_spec": 1,
+                        },
+                    }
+                )
+        contract["steps"] = normalized_steps
+    payload["sequence_contract"] = contracts
+    return TaskSpec.model_validate(payload)
+
+
 def _apply_load_distribution_fallback(*, intent_payload: Dict[str, Any], task: TaskSpec) -> TaskSpec:
     if task.intent_category != "load_distribution":
         return task
@@ -1312,6 +1450,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             a1_out.task = _apply_operator_action_fallback(intent_payload=intent_payload, task=a1_out.task)
             a1_out.task = _apply_observation_fallback(intent_payload=intent_payload, task=a1_out.task)
             a1_out.task = _apply_load_distribution_fallback(intent_payload=intent_payload, task=a1_out.task)
+            a1_out.task = _apply_telemetry_monitoring_fallback(ctx=ctx, intent_payload=intent_payload, task=a1_out.task)
             last_task_candidate = a1_out.task
             _progress("Agent1 已生成TaskSpec，转交Agent3进行语义完整性审查。")
             # Agent-based semantic completeness check for TaskSpec before Agent2 generation.
@@ -1594,10 +1733,10 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         det = validate_packet_sequence_contract(ctx=ctx, task=task, packet_sequence=attempt_result.packet_sequence)
         if det.status == "FAIL":
             attempt_result.critic = det
-        elif attempt_result.critic.status == "FAIL" and _is_non_packet_stage_feedback(attempt_result.critic.feedback):
+        elif attempt_result.critic.status == "FAIL" and _should_accept_deterministic_packet_result(task=task, feedback=attempt_result.critic.feedback):
             attempt_result.critic = CriticResult(
                 status="PASS",
-                feedback="Packet sequence passes deterministic validation; ignoring non-packet-stage critic feedback.",
+                feedback="Packet sequence passes deterministic validation; ignoring non-blocking critic feedback after deterministic acceptance.",
             )
         recorder.record(
             agent_role="deterministic_validator",

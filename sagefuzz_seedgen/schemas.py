@@ -286,7 +286,7 @@ class TaskSpec(BaseModel):
         default_factory=list,
         description="Structured observation actions implied by the test intent.",
     )
-    traffic_pattern: Optional[str] = Field(
+    traffic_pattern: Optional[Any] = Field(
         None,
         description="Traffic stimulus pattern needed to drive the intent, e.g. repeated probes or sustained flow.",
     )
@@ -320,6 +320,16 @@ class TaskSpec(BaseModel):
             "Supports full names (e.g., MyIngress.check_ports) and short names (e.g., check_ports)."
         ),
     )
+
+    @field_validator("traffic_pattern", mode="before")
+    @classmethod
+    def _normalize_traffic_pattern(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            if isinstance(value.get("type"), str):
+                detail = str(value.get("description") or value.get("detail") or "").strip()
+                return f"{value.get('type')}: {detail}" if detail else value.get("type")
+            return str(value)
+        return value
 
     @field_validator("operator_actions")
     @classmethod
@@ -434,7 +444,7 @@ class SequenceScenarioSpec(BaseModel):
         None,
         description="Intent-level goal of this scenario, e.g. establish state, drive counter growth, or verify drop.",
     )
-    expected_observation: Optional[str] = Field(
+    expected_observation: Optional[Any] = Field(
         None,
         description="Scenario-level expected observation, especially for telemetry/monitoring tests.",
     )
@@ -463,6 +473,15 @@ class SequenceScenarioSpec(BaseModel):
             "negative_required": "negative",
         }
         return mapping.get(token, token)
+
+    @field_validator("expected_observation", mode="before")
+    @classmethod
+    def _normalize_expected_observation(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            if isinstance(value.get("description"), str):
+                return value.get("description")
+            return str(value)
+        return value
 
     @field_validator("steps")
     @classmethod
