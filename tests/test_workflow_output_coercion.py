@@ -4,6 +4,7 @@ from pathlib import Path
 from sagefuzz_seedgen.schemas import Agent1Output, ObservationIntentSpec, OperatorActionSpec, PacketSpec, TaskSpec, UserQuestion
 from sagefuzz_seedgen.workflow.packet_sequence_workflow import (
     _apply_initial_intent_answer,
+    _apply_operator_action_fallback,
     _coerce_schema_output,
     _group_packets_by_scenario,
     _normalize_test_objective,
@@ -163,6 +164,24 @@ class TestWorkflowOutputCoercion(unittest.TestCase):
             required=False,
         )
         self.assertEqual(q.field, "topology_mapping")
+
+    def test_operator_action_fallback_infers_link_failure_and_notify(self) -> None:
+        task = TaskSpec(
+            task_id="fr1",
+            task_description="reroute after s1-s2 link failure and controller reconvergence",
+            feature_under_test="forwarding_behavior",
+            intent_category="path_validation",
+            role_bindings={"traffic_src": "h2", "traffic_dst": "h4"},
+        )
+        patched = _apply_operator_action_fallback(
+            intent_payload={
+                "intent_text": "人工将 s1-s2 链路断开，然后通知控制器重收敛。",
+            },
+            task=task,
+        )
+        self.assertEqual(len(patched.operator_actions), 2)
+        self.assertEqual(patched.operator_actions[0].action_type, "manual_link_event")
+        self.assertEqual(patched.operator_actions[1].action_type, "manual_controller_notify")
 
     def test_fallback_task_spec_accepts_new_intent_categories(self) -> None:
         task = TaskSpec(

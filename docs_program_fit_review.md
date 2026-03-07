@@ -30,13 +30,21 @@ This document records the human-style intents used to exercise the system agains
 
 ### Fast-Reroute
 - Intent:
-  - Pending
+  - 验证 fast reroute 功能。让 h2 到 h4 发送 IPv4 流量；测试过程中人工将 s1-s2 这条链路断开，期望流量先立即切换到备份路径；然后人工通知控制器重收敛，期望流量切换到新的最短路径。
 - Output index:
-  - Pending
+  - runs/2026-03-07T051823Z_packet_sequence_index.json
 - Testcase dir:
-  - Pending
+  - runs/2026-03-07T051823Z_testcases
+- Output cases:
+  - runs/2026-03-07T051823Z_testcases/baseline_forwarding.json
+  - runs/2026-03-07T051823Z_testcases/fast_reroute_after_link_failure.json
+  - runs/2026-03-07T051823Z_testcases/convergence_to_new_shortest_path.json
 - Status:
-  - Pending
+  - PASS
+- Notes:
+  - Uses manual link-failure and controller-notify operator actions.
+  - Packet sequence, oracle prediction, and final testcase generation all succeeded.
+  - Baseline forwarding entities were supplied by deterministic minimal fallback when Agent4 returned invalid or empty entities.
 
 ### Congestion_Aware_Load_Balancing
 - Intent:

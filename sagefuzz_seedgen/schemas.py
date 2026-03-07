@@ -11,10 +11,10 @@ def _normalize_operation_dict(item: Any) -> Any:
     out = dict(item)
     if "operation_type" not in out and isinstance(out.get("operation"), str):
         op = str(out.get("operation"))
-        mapping = {"table_add": "apply_table_entry", "add_entry": "apply_table_entry"}
+        mapping = {"table_add": "apply_table_entry", "add_entry": "apply_table_entry", "add_table_entry": "apply_table_entry", "table_insert": "apply_table_entry", "insert": "apply_table_entry", "apply_entity": "apply_table_entry", "apply_rule": "apply_table_entry", "control_plane": "custom", "control_plane_operation": "custom"}
         out["operation_type"] = mapping.get(op, op)
     elif isinstance(out.get("operation_type"), str):
-        mapping = {"table_add": "apply_table_entry", "add_entry": "apply_table_entry"}
+        mapping = {"table_add": "apply_table_entry", "add_entry": "apply_table_entry", "add_table_entry": "apply_table_entry", "table_insert": "apply_table_entry", "insert": "apply_table_entry", "apply_entity": "apply_table_entry", "apply_rule": "apply_table_entry", "control_plane": "custom", "control_plane_operation": "custom"}
         out["operation_type"] = mapping.get(out["operation_type"], out["operation_type"])
     if "order" not in out and isinstance(out.get("step"), int):
         out["order"] = out.get("step")
@@ -538,6 +538,26 @@ class TableRule(BaseModel):
     action_name: str
     action_data: Dict[str, Any] = Field(default_factory=dict, description="Action parameters keyed by parameter name.")
     priority: Optional[int] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_table_rule(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        out = dict(value)
+        if "match_type" not in out or not out.get("match_type"):
+            guessed = "exact"
+            match_keys = out.get("match_keys")
+            if isinstance(match_keys, dict):
+                for item in match_keys.values():
+                    if isinstance(item, (list, tuple)) and len(item) >= 2:
+                        guessed = "lpm"
+                        break
+                    if isinstance(item, str) and "/" in item:
+                        guessed = "lpm"
+                        break
+            out["match_type"] = guessed
+        return out
 
 
 class ControlPlaneOperation(BaseModel):

@@ -713,6 +713,89 @@ def _resolve_memory_user_id(*, cfg: RunConfig, intent_payload: Dict[str, Any]) -
     return f"{base_user_id}:{bucket}"
 
 
+def _infer_operator_actions_from_intent(*, intent_payload: Dict[str, Any], task: TaskSpec) -> List[Dict[str, Any]]:
+    intent_text = str(intent_payload.get("intent_text") or "")
+    combined = " ".join(
+        [
+            intent_text,
+            str(intent_payload.get("operator_constraints") or ""),
+            str(task.task_description or ""),
+            str(task.expected_observation_semantics or ""),
+        ]
+    )
+    actions: List[Dict[str, Any]] = []
+    next_order = 1
+
+    threshold_match = re.search(r"(?:阈值[^0-9]{0,8}|threshold[^0-9]{0,8})(\d+)", combined, re.IGNORECASE)
+    if threshold_match and any(token in combined.lower() for token in ["manual", "人工", "调低", "override", "threshold"]):
+        actions.append(
+            {
+                "order": next_order,
+                "action_type": "manual_threshold_override",
+                "timing": "before_traffic",
+                "scenario": None,
+                "target": "PACKET_THRESHOLD",
+                "parameters": {"new_value": int(threshold_match.group(1))},
+                "expected_effect": f"threshold manually set to {threshold_match.group(1)} before traffic",
+            }
+        )
+        next_order += 1
+
+    link_match = re.search(r"(s\d+\s*-\s*s\d+)", combined, re.IGNORECASE)
+    if link_match and any(token in combined.lower() for token in ["断开", "fail", "failure", "down"]):
+        link_id = link_match.group(1).replace(" ", "")
+        actions.append(
+            {
+                "order": next_order,
+                "action_type": "manual_link_event",
+                "timing": "between_scenarios",
+                "scenario": None,
+                "target": link_id,
+                "parameters": {"event_type": "link_failure", "link_id": link_id},
+                "expected_effect": f"{link_id} is manually failed before failover validation",
+            }
+        )
+        next_order += 1
+
+    if any(token in combined.lower() for token in ["notify controller", "通知控制器", "重收敛", "reconvergence", "reconverge"]):
+        actions.append(
+            {
+                "order": next_order,
+                "action_type": "manual_controller_notify",
+                "timing": "between_scenarios",
+                "scenario": None,
+                "target": "controller",
+                "parameters": {"trigger_reconvergence": True},
+                "expected_effect": "controller is notified to recompute forwarding state",
+            }
+        )
+
+    return actions
+
+
+def _apply_operator_action_fallback(*, intent_payload: Dict[str, Any], task: TaskSpec) -> TaskSpec:
+    inferred = _infer_operator_actions_from_intent(intent_payload=intent_payload, task=task)
+    if not inferred:
+        return task
+    existing = [item.model_dump() if hasattr(item, "model_dump") else item for item in task.operator_actions]
+    existing_types = {str(item.get("action_type")) for item in existing if isinstance(item, dict)}
+    merged = list(existing)
+    next_order = max([int(item.get("order", 0)) for item in existing if isinstance(item, dict)] + [0]) + 1
+    for item in inferred:
+        action_type = str(item.get("action_type"))
+        if action_type in existing_types:
+            continue
+        item = dict(item)
+        item["order"] = next_order
+        next_order += 1
+        merged.append(item)
+    if merged == existing:
+        return task
+    payload = task.model_dump()
+    payload["operator_actions"] = merged
+    return TaskSpec.model_validate(payload)
+
+
 def _resolve_generation_mode(*, intent_payload: Dict[str, Any], task: TaskSpec) -> str:
     selected = _normalize_test_objective(str(intent_payload.get("test_objective") or ""))
     if selected == "control_plane_rules":
@@ -869,6 +952,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         )
 
         if a1_out.kind == "task" and a1_out.task is not None:
+            a1_out.task = _apply_operator_action_fallback(intent_payload=intent_payload, task=a1_out.task)
             last_task_candidate = a1_out.task
             _progress("Agent1 已生成TaskSpec，转交Agent3进行语义完整性审查。")
             # Agent-based semantic completeness check for TaskSpec before Agent2 generation.
@@ -1386,11 +1470,22 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 if final_entity_critic.status == "PASS":
                     _progress(f"场景'{scenario}'的实体生成已通过审查。")
                     break
+                failure_text = (last_entity_feedback or "").lower()
+                deterministic_fallback_markers = [
+                    "entities is empty",
+                    "unknown table",
+                    "not allowed by table",
+                    "missing action_data",
+                ]
+                if any(marker in failure_text for marker in deterministic_fallback_markers):
+                    _progress(f"场景'{scenario}'实体失败属于可确定性兜底类型，跳过剩余重试并进入fallback。原因：{last_entity_feedback}")
+                    break
                 _progress(f"场景'{scenario}'实体未通过，准备重试。原因：{last_entity_feedback}")
 
             fallback_needed = (
                 last_entities is None
                 or last_entity_critic is None
+                or getattr(last_entity_critic, "status", "FAIL") != "PASS"
                 or not getattr(last_entities, "entities", [])
             )
             if fallback_needed:

@@ -121,7 +121,7 @@ def _resolve_symbolic_expectation(
         "same_flow",
         "same_as_previous",
     }
-    if token in abstract_tokens or token.startswith("fixed") or token.startswith("increment") or token.startswith("decrement") or token.startswith("different_"):
+    if token in abstract_tokens or token in {"any", "wildcard"} or token.startswith("fixed") or token.startswith("increment") or token.startswith("decrement") or token.startswith("different_") or token.endswith("gateway_mac") or token == "next_hop_mac":
         return {"non_empty": True}
 
     if token.endswith("_ip"):
@@ -140,6 +140,15 @@ def _resolve_symbolic_expectation(
         if role in ctx.host_info:
             return ctx.host_info[role].get("mac") or expected
 
+    if token.count(".") == 1:
+        host_token, attr = token.split(".", 1)
+        host_id = role_bindings.get(host_token, host_token)
+        if host_id in ctx.host_info:
+            if attr == "ip":
+                return _normalize_ipv4(ctx.host_info[host_id].get("ip")) or expected
+            if attr == "mac":
+                return ctx.host_info[host_id].get("mac") or expected
+
     tcp_flag_aliases = {
         "S": {"one_of": ["S", "0x02", 2, "2", "SYN"]},
         "SYN": {"one_of": ["S", "0x02", 2, "2", "SYN"]},
@@ -152,6 +161,17 @@ def _resolve_symbolic_expectation(
         return tcp_flag_aliases[token]
 
     return expected
+
+
+def _resolve_role_host(role_or_host: Optional[str], role_bindings: Dict[str, str], ctx: ProgramContext) -> Optional[str]:
+    if not isinstance(role_or_host, str) or not role_or_host.strip():
+        return None
+    token = role_or_host.strip()
+    if token in role_bindings:
+        return role_bindings[token]
+    if token in ctx.host_info:
+        return token
+    return None
 
 
 def _scenario_packets(packet_sequence: List[PacketSpec], scenario: str) -> List[PacketSpec]:
@@ -223,7 +243,7 @@ def _validate_scenario_contract(
                 ),
             )
         packet = step_packets[0]
-        expected_tx_host = role_bindings.get(step.tx_role)
+        expected_tx_host = _resolve_role_host(step.tx_role, role_bindings, ctx)
         if expected_tx_host is None:
             return CriticResult(
                 status="FAIL",
@@ -249,7 +269,7 @@ def _validate_scenario_contract(
                 )
 
             if step.rx_role:
-                expected_rx_host = role_bindings.get(step.rx_role)
+                expected_rx_host = _resolve_role_host(step.rx_role, role_bindings, ctx)
                 if expected_rx_host is None:
                     return CriticResult(
                         status="FAIL",
@@ -489,6 +509,21 @@ def _collect_table_match_types(table_keys: Any) -> Set[str]:
     return out
 
 
+def _resolve_table_definition(ctx: ProgramContext, table_name: str) -> Optional[tuple[str, Dict[str, Any]]]:
+    exact = ctx.tables_by_name.get(table_name)
+    if isinstance(exact, dict):
+        return table_name, exact
+    token = table_name.strip().lower()
+    matches = [
+        (full_name, table)
+        for full_name, table in ctx.tables_by_name.items()
+        if isinstance(full_name, str) and isinstance(table, dict) and full_name.lower().endswith(f".{token}")
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
 def _is_forbidden_table(table_name: str, forbidden_tables: List[str]) -> bool:
     normalized = table_name.strip().lower()
     for raw in forbidden_tables:
@@ -530,9 +565,12 @@ def validate_control_plane_entities(
                 ),
             )
 
-        table = ctx.tables_by_name.get(rule.table_name)
-        if not isinstance(table, dict):
+        resolved_table = _resolve_table_definition(ctx, rule.table_name)
+        if resolved_table is None:
             return CriticResult(status="FAIL", feedback=f"entity[{idx}]: unknown table '{rule.table_name}'.")
+        resolved_table_name, table = resolved_table
+        if resolved_table_name != rule.table_name:
+            rule.table_name = resolved_table_name
 
         table_actions = table.get("actions", [])
         if not (isinstance(table_actions, list) and rule.action_name in table_actions):
