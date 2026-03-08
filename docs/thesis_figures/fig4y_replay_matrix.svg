@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="860" viewBox="0 0 1500 860">
+<rect width="100%" height="100%" fill="#fbfaf6"/>
+<text x="750" y="60" font-size="28" font-family="Arial, Helvetica, sans-serif" font-weight="bold" text-anchor="middle" fill="#16202a">图4-Y 各实验程序直接回放验证状态矩阵</text>
+<text x="750" y="95" font-size="16" font-family="Arial, Helvetica, sans-serif" font-weight="normal" text-anchor="middle" fill="#475569">注：√ 表示满足，△ 表示部分满足</text>
+<rect x="80" y="130" width="420" height="100" fill="#dbe4ea" stroke="#475569" stroke-width="1.5"/>
+<text x="290" y="188" font-size="22" font-family="Arial, Helvetica, sans-serif" font-weight="bold" text-anchor="middle" fill="#16202a">程序</text>
+<rect x="500" y="130" width="250" height="100" fill="#dbe4ea" stroke="#475569" stroke-width="1.5"/>
+<text x="625" y="188" font-size="22" font-family="Arial, Helvetica, sans-serif" font-weight="bold" text-anchor="middle" fill="#16202a">可直接回放</text>
+<rect x="750" y="130" width="250" height="100" fill="#dbe4ea" stroke="#475569" stroke-width="1.5"/>
+<text x="875" y="188" font-size="22" font-family="Arial, Helvetica, sans-serif" font-weight="bold" text-anchor="middle" fill="#16202a">与 oracle 一致</text>
+<rect x="1000" y="130" width="320" height="100" fill="#dbe4ea" stroke="#475569" stroke-width="1.5"/>
+<text x="1160" y="188" font-size="22" font-family="Arial, Helvetica, sans-serif" font-weight="bold" text-anchor="middle" fill="#16202a">区分正确/缺陷实现</text>
+<rect x="80" y="230" width="420" height="100" fill="#ffffff" stroke="#94a3b8" stroke-width="1.2"/>
+<text x="98" y="290" font-size="21" font-family="Arial, Helvetica, sans-serif" font-weight="bold" text-anchor="start" fill="#111827">Stateful Firewall</text>
+<rect x="500" y="230" width="250" height="100" fill="#e7f4ec" stroke="#94a3b8" stroke-width="1.2"/>
+<text x="625" y="294" font-size="34" font-family="Arial, Helvetica, sans-serif" font-weight="bold" text-anchor="middle" fill="#2f6b4f">√</text>
+<rect x="750" y="230" width="250" height="100" fill="#e7f4ec" stroke="#94a3b8" stroke-width="1.2"/>
+<text x="875" y="294" font-size="34" font-family="Arial, Helvetica, sans-serif" font-weight="bold" text-anchor="middle" fill="#2f6b4f">√</text>
+<rect x="1000" y="230" width="320" height="100" fill="#e7f4ec" stroke="#94a3b8" stroke-width="1.2"/>
+<text x="1160" y="294" font-size="34" font-family="Arial, Helvetica, sans-serif" font-weight="bold" text-anchor="middle" fill="#2f6b4f">√</text>
+<rect x="80" y="330" width="420" height="100" fill="#ffffff" stroke="#94a3b8" stroke-width="1.2"/>
+<text x="98" y="390" font-size="21" font-family="Arial, Helvetica, sans-serif" font-weight="bold" text-anchor="start" fill="#111827">Heavy Hitter Detector</text>
+<rect x="500" y="330" width="250" height="100" fill="#e7f4ec" stroke="#94a3b8" stroke-width="1.2"/>
+<text x="625" y="394" font-size="34" font-family="Arial, Helvetica, sans-serif" font-weight="bold" text-anchor="middle" fill="#2f6b4f">√</text>
+<rect x="750" y="330" width="250" height="100" fill="#e7f4ec" stroke="#94a3b8" stroke-width="1.2"/>
+<text x="875" y="394" font-size="34" font-family="Arial, Helvetica, sans-serif" font-weight="bold" text-anchor="middle" fill="#2f6b4f">√</text>
+<rect x="1000" y="330" width="320" height="100" fill="#fff3d6" stroke="#94a3b8" stroke-width="1.2"/>
+<text x="1160" y="394" font-size="34" font-family="Arial, Helvetica, sans-serif" font-weight="bold" text-anchor="middle" fill="#b7791f">△</text>
+<rect x="80" y="430" width="420" height="100" fill="#ffffff" stroke="#94a3b8" stroke-width="1.2"/>
+<text x="98" y="490" font-size="21" font-family="Arial, Helvetica, sans-serif" font-weight="bold" text-anchor="start" fill="#111827">Fast Reroute</text>
+<rect x="500" y="430" width="250" height="100" fill="#e7f4ec" stroke="#94a3b8" stroke-width="1.2"/>
+<text x="625" y="494" font-size="34" font-family="Arial, Helvetica, sans-serif" font-weight="bold" text-anchor="middle" fill="#2f6b4f">√</text>
+<rect x="750" y="430" width="250" height="100" fill="#e7f4ec" stroke="#94a3b8" stroke-width="1.2"/>
+<text x="875" y="494" font-size="34" font-family="Arial, Helvetica, sans-serif" font-weight="bold" text-anchor="middle" fill="#2f6b4f">√</text>
+<rect x="1000" y="430" width="320" height="100" fill="#e7f4ec" stroke="#94a3b8" stroke-width="1.2"/>
+<text x="1160" y="494" font-size="34" font-family="Arial, Helvetica, sans-serif" font-weight="bold" text-anchor="middle" fill="#2f6b4f">√</text>
+<rect x="80" y="530" width="420" height="100" fill="#ffffff" stroke="#94a3b8" stroke-width="1.2"/>
+<text x="98" y="590" font-size="21" font-family="Arial, Helvetica, sans-serif" font-weight="bold" text-anchor="start" fill="#111827">Link Monitor</text>
+<rect x="500" y="530" width="250" height="100" fill="#e7f4ec" stroke="#94a3b8" stroke-width="1.2"/>
+<text x="625" y="594" font-size="34" font-family="Arial, Helvetica, sans-serif" font-weight="bold" text-anchor="middle" fill="#2f6b4f">√</text>
+<rect x="750" y="530" width="250" height="100" fill="#fff3d6" stroke="#94a3b8" stroke-width="1.2"/>
+<text x="875" y="594" font-size="34" font-family="Arial, Helvetica, sans-serif" font-weight="bold" text-anchor="middle" fill="#b7791f">△</text>
+<rect x="1000" y="530" width="320" height="100" fill="#e7f4ec" stroke="#94a3b8" stroke-width="1.2"/>
+<text x="1160" y="594" font-size="34" font-family="Arial, Helvetica, sans-serif" font-weight="bold" text-anchor="middle" fill="#2f6b4f">√</text>
+<rect x="80" y="630" width="420" height="100" fill="#ffffff" stroke="#94a3b8" stroke-width="1.2"/>
+<text x="98" y="690" font-size="21" font-family="Arial, Helvetica, sans-serif" font-weight="bold" text-anchor="start" fill="#111827">Congestion-Aware Load Balancing</text>
+<rect x="500" y="630" width="250" height="100" fill="#e7f4ec" stroke="#94a3b8" stroke-width="1.2"/>
+<text x="625" y="694" font-size="34" font-family="Arial, Helvetica, sans-serif" font-weight="bold" text-anchor="middle" fill="#2f6b4f">√</text>
+<rect x="750" y="630" width="250" height="100" fill="#fff3d6" stroke="#94a3b8" stroke-width="1.2"/>
+<text x="875" y="694" font-size="34" font-family="Arial, Helvetica, sans-serif" font-weight="bold" text-anchor="middle" fill="#b7791f">△</text>
+<rect x="1000" y="630" width="320" height="100" fill="#fff3d6" stroke="#94a3b8" stroke-width="1.2"/>
+<text x="1160" y="694" font-size="34" font-family="Arial, Helvetica, sans-serif" font-weight="bold" text-anchor="middle" fill="#b7791f">△</text>
+</svg>

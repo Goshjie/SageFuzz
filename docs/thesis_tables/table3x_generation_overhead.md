@@ -1,0 +1,9 @@
+# 表3-X 测试生成性能与开销统计
+
+| 程序 | 生成耗时/s | 数据包数量 | 流表规则数 |
+| --- | ---: | ---: | ---: |
+| Stateful Firewall | 87.41 | 3 | 3 |
+| Heavy Hitter Detector | 416.49 | 30 | 3 |
+| Fast Reroute | 704.16 | 20 | 9 |
+| Link Monitor | 117.90 | 21 | 1 |
+| Congestion-Aware Load Balancing | 144.89 | 15 | 3 |

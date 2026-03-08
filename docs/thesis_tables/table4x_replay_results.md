@@ -1,0 +1,9 @@
+# 表4-X 最终 testcase 直接回放实验结果
+
+| 程序 | 回放 testcase | 实际观测 | 结论 |
+| --- | --- | --- | --- |
+| Stateful Firewall | positive_internal_initiates / negative_external_initiates | 正例 SYN 与 SYN-ACK 均成功转发；反例外部 SYN 未到达 h1；bug 版中正例 SYN-ACK 在 s1 入口后被阻断 | 可直接回放，且能稳定区分正确实现与缺陷实现 |
+| Heavy Hitter Detector | positive_heavy_hitter_triggered | 按 testcase 回放 15 个包后，h2 实际仅捕获 10 个包 | 可直接回放，并与 oracle 一致 |
+| Fast Reroute | fast_reroute_after_link_failure | 在执行链路失效动作后，correct 版 h4 捕获 10 个包，bug 版 h4 捕获 0 个包 | 可直接回放，且能稳定区分正确实现与缺陷实现 |
+| Link Monitor | positive_link_utilization_monitoring | correct 版返回 probe 中 byte_cnt 非零，bug 版为零；但 testcase 的 probe 路径约束不足 | 可直接回放，但观测路径语义仍需完善 |
+| Congestion-Aware Load Balancing | congestion_reroute | 5 个 testcase 包可直接送达 h5；但 testcase 对拥塞注入动作描述过于抽象，未稳定观测到 reroute/feedback 证据 | 可直接回放，但操作动作语义仍需完善 |
