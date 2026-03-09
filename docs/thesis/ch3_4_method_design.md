@@ -96,6 +96,38 @@ Output:
 
 此外，系统支持基于意图相似性的记忆复用。其作用是为相似任务提供辅助上下文，而非替代规则约束与一致性校验。也就是说，记忆机制只能帮助系统更快聚焦于相近任务模式，最终输出仍需经过结构和语义双重校验后才能被接受。
 
+为了更直观地说明多智能体如何协同生成最终 testcase，算法3-4给出了 testcase 的生成过程。该过程强调的不是单个智能体如何产生文本输出，而是主控调度器如何将任务规约、数据包序列、控制平面规则、执行顺序与 oracle 逐步整合为统一测试工件。
+
+**Algorithm 3-4 Testcase Generation Algorithm**
+
+```text
+Input:
+    accepted task_spec, program_context
+Output:
+    testcase_set
+
+1:  initialize empty testcase set
+2:  for each scenario in task_spec do
+3:      generate packet-sequence candidate for the scenario
+4:      review packet-sequence candidate against scenario constraints
+5:      if packet sequence is invalid then
+6:          repair, retry, or use packet fallback
+7:      if generation mode requires rules then
+8:          generate control-plane rule candidate
+9:          review rule candidate against table and action constraints
+10:         if rule set is invalid then
+11:             repair, retry, or use rule fallback
+12:     else
+13:         skip rule generation and keep packet-only execution path
+14:     derive unified execution sequence from packets, rules, and operator actions
+15:     generate oracle prediction for the scenario
+16:     if oracle is invalid then
+17:         use oracle fallback
+18:     assemble testcase from packet sequence, rules, execution sequence, and oracle
+19:     append testcase to testcase set
+20: return testcase set
+```
+
 ## 3.4.5 测试种子的结构化表示
 
 P4-BISG 输出的不是单一报文文件，而是一个具备执行语义的 testcase。其结构至少包含五类信息：数据包序列、控制平面规则、控制平面操作序列、统一执行时间线和预期结果描述。
@@ -104,9 +136,9 @@ P4-BISG 输出的不是单一报文文件，而是一个具备执行语义的 te
 
 这一设计的意义在于，后续实验不必再根据生成结果人工组织执行步骤。对于涉及链路断开、阈值调整或背景流量驱动的场景，执行时间线可以直接表达“何时执行动作、何时发包、何时观察”；对于状态型程序，预期结果描述可以直接给出每一步应到达的状态和接收端。因此，testcase 结构化表示既服务于生成阶段，也服务于后续实验回放和结果比对。
 
-算法3-3给出了测试执行时间线的构造过程。
+算法3-5给出了测试执行时间线的构造过程。
 
-**Algorithm 3-3 Execution Sequence Construction Algorithm**
+**Algorithm 3-5 Execution Sequence Construction Algorithm**
 
 ```text
 Input:
