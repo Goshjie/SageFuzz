@@ -1,0 +1,58 @@
+digraph MyEgress {
+subgraph cluster {
+graph [
+label="", labeljust=r, style=bold];
+0[label=__START__, margin="", shape=rectangle, style=solid];
+1[label=__EXIT__, margin="", shape=rectangle, style=solid];
+2[label="standard_metadata.instance_type == 2;", margin="", shape=rectangle, style=solid];
+3[label="recirculate_preserving_field_list(0);", margin="", shape=rectangle, style=solid];
+4[label="standard_metadata.instance_type == 0 && hdr.ethernet.etherType != 30584;", margin="", shape=rectangle, style=solid];
+5[label="hdr.tcp.isValid();", margin="", shape=rectangle, style=solid];
+6[label="hdr.telemetry.isValid();", margin="", shape=rectangle, style=solid];
+7[label="hdr.telemetry.enq_qdepth < (bit<16>)standard_metadata.enq_qdepth && meta.egress_type == 2;", margin="", shape=rectangle, style=solid];
+8[label="hdr.telemetry.enq_qdepth = (bit<16>)standard_metadata.enq_qdepth;", margin="", shape=rectangle, style=solid];
+9[label="meta.egress_type == 1;", margin="", shape=rectangle, style=solid];
+10[label="hdr.ethernet.etherType = 2048;
+hdr.telemetry.setInvalid();", margin="", shape=rectangle, style=solid];
+11[label="hdr.telemetry.enq_qdepth > 50;", margin="", shape=rectangle, style=solid];
+12[label="read_feedback_ts();
+random<bit<48>>(backoff_0/backoff, 500000, 1000000);", margin="", shape=rectangle, style=solid];
+13[label="standard_metadata.ingress_global_timestamp - meta.feedback_ts > backoff_0/backoff;", margin="", shape=rectangle, style=solid];
+14[label="feedback_ts_0/feedback_ts.write((bit<32>)meta.feedback_register_index, standard_metadata.ingress_global_timestamp);
+random<bit<8>>(probability_0/probability, 0, 3);", margin="", shape=rectangle, style=solid];
+15[label="probability_0/probability == 0;", margin="", shape=rectangle, style=solid];
+16[label="clone(CloneType.E2E, 100);", margin="", shape=rectangle, style=solid];
+17[label="meta.egress_type == 2;", margin="", shape=rectangle, style=solid];
+18[label="hdr.telemetry.setValid();
+...
+hdr.telemetry.nextHeaderType = 2048;", margin="", shape=rectangle, style=solid];
+0 -> 2[label=""];
+2 -> 3[label=TRUE];
+2 -> 4[label=FALSE];
+3 -> 1[label=""];
+4 -> 5[label=TRUE];
+4 -> 1[label=FALSE];
+5 -> 6[label=TRUE];
+5 -> 1[label=FALSE];
+6 -> 7[label=TRUE];
+6 -> 17[label=FALSE];
+7 -> 8[label=TRUE];
+7 -> 9[label=FALSE];
+8 -> 1[label=""];
+9 -> 10[label=TRUE];
+9 -> 1[label=FALSE];
+10 -> 11[label=""];
+11 -> 12[label=TRUE];
+11 -> 1[label=FALSE];
+12 -> 13[label=""];
+13 -> 14[label=TRUE];
+13 -> 1[label=FALSE];
+14 -> 15[label=""];
+15 -> 16[label=TRUE];
+15 -> 1[label=FALSE];
+16 -> 1[label=""];
+17 -> 18[label=TRUE];
+17 -> 1[label=FALSE];
+18 -> 1[label=""];
+}
+}

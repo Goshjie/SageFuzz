@@ -1,0 +1,128 @@
+pkg_info {
+  arch: "v1model"
+}
+tables {
+  preamble {
+    id: 37375156
+    name: "MyIngress.ipv4_lpm"
+    alias: "ipv4_lpm"
+  }
+  match_fields {
+    id: 1
+    name: "hdr.ipv4.dstAddr"
+    bitwidth: 32
+    match_type: LPM
+  }
+  action_refs {
+    id: 16873028
+  }
+  action_refs {
+    id: 25652968
+  }
+  size: 512
+}
+tables {
+  preamble {
+    id: 44743112
+    name: "MyIngress.rewrite_mac"
+    alias: "rewrite_mac"
+  }
+  match_fields {
+    id: 1
+    name: "meta.nextHop"
+    bitwidth: 32
+    match_type: EXACT
+  }
+  action_refs {
+    id: 18677006
+  }
+  action_refs {
+    id: 25652968
+  }
+  size: 512
+}
+actions {
+  preamble {
+    id: 18677006
+    name: "MyIngress.rewriteMac"
+    alias: "rewriteMac"
+  }
+  params {
+    id: 1
+    name: "dstAddr"
+    bitwidth: 48
+  }
+}
+actions {
+  preamble {
+    id: 25652968
+    name: "MyIngress.drop"
+    alias: "drop"
+  }
+}
+actions {
+  preamble {
+    id: 16873028
+    name: "MyIngress.read_port"
+    alias: "read_port"
+  }
+  params {
+    id: 1
+    name: "index"
+    bitwidth: 32
+  }
+}
+actions {
+  preamble {
+    id: 22095308
+    name: "MyIngress.read_alternativePort"
+    alias: "read_alternativePort"
+  }
+}
+registers {
+  preamble {
+    id: 381348420
+    name: "MyIngress.primaryNH"
+    alias: "primaryNH"
+  }
+  type_spec {
+    bitstring {
+      bit {
+        bitwidth: 32
+      }
+    }
+  }
+  size: 1024
+}
+registers {
+  preamble {
+    id: 373453307
+    name: "MyIngress.alternativeNH"
+    alias: "alternativeNH"
+  }
+  type_spec {
+    bitstring {
+      bit {
+        bitwidth: 32
+      }
+    }
+  }
+  size: 1024
+}
+registers {
+  preamble {
+    id: 380146993
+    name: "MyIngress.linkState"
+    alias: "linkState"
+  }
+  type_spec {
+    bitstring {
+      bit {
+        bitwidth: 1
+      }
+    }
+  }
+  size: 512
+}
+type_info {
+}

@@ -1,0 +1,32 @@
+digraph MyIngress {
+subgraph cluster {
+graph [
+label="", labeljust=r, style=bold];
+0[label=__START__, margin="", shape=rectangle, style=solid];
+1[label=__EXIT__, margin="", shape=rectangle, style=solid];
+2[label="standard_metadata.instance_type == 4;", margin="", shape=rectangle, style=solid];
+3[label="src_ip_0/src_ip = hdr.ipv4.srcAddr;
+...
+hdr.ethernet.etherType = 30584;", margin="", shape=rectangle, style=solid];
+4[label="hdr.ipv4.isValid() && hdr.ipv4.ttl > 1;", margin="", shape=rectangle, style=solid];
+5[label="MyIngress.ipv4_lpm", margin="", shape=ellipse, style=solid];
+6[label="MyIngress.ecmp_group_to_nhop", margin="", shape=ellipse, style=solid];
+7[label="MyIngress.egress_type", margin="", shape=ellipse, style=solid];
+8[label="standard_metadata.instance_type == 0 && hdr.ethernet.etherType == 30584 && meta.egress_type == 1;", margin="", shape=rectangle, style=solid];
+9[label="update_flow_seed();
+drop_2/drop();", margin="", shape=rectangle, style=solid];
+0 -> 2[label=""];
+2 -> 3[label=TRUE];
+2 -> 4[label=FALSE];
+3 -> 4[label=""];
+4 -> 5[label=TRUE];
+4 -> 7[label=FALSE];
+5 -> 6[label="ecmp_group;"];
+5 -> 7[label=default];
+6 -> 7[label=""];
+7 -> 8[label=""];
+8 -> 9[label=TRUE];
+8 -> 1[label=FALSE];
+9 -> 1[label=""];
+}
+}

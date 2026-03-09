@@ -7,8 +7,11 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar
+from uuid import uuid4
 
 from pydantic import BaseModel
+from agno.run.base import RunContext
+from agno.run.agent import RunInput, RunOutput
 
 from sagefuzz_seedgen.agents.team_factory import build_agents_and_team
 from sagefuzz_seedgen.config import RunConfig
@@ -113,6 +116,162 @@ def _error_text(err: Exception) -> str:
 
 def _progress(message: str) -> None:
     print(f"[进度] {message}", flush=True)
+
+
+def _should_use_agent_run_compat(agent: Any) -> bool:
+    model = getattr(agent, "model", None)
+    model_id = str(getattr(model, "id", "") or "").lower()
+    return ("deepseek" in model_id) or ("kimi" in model_id)
+
+
+def _has_unstable_schema_mode(agent: Any) -> bool:
+    model = getattr(agent, "model", None)
+    model_id = str(getattr(model, "id", "") or "").lower()
+    return ("deepseek" in model_id) or ("kimi" in model_id)
+
+
+def _strip_deepseek_schema_noise(value: Any) -> Any:
+    if isinstance(value, dict):
+        cleaned: Dict[str, Any] = {}
+        for key, item in value.items():
+            if key == "additionalProperties" and item is False:
+                continue
+            cleaned[key] = _strip_deepseek_schema_noise(item)
+        return cleaned
+    if isinstance(value, list):
+        return [_strip_deepseek_schema_noise(item) for item in value]
+    return value
+
+
+def _sanitize_tools_for_deepseek(tools: List[Any]) -> List[Dict[str, Any]]:
+    sanitized: List[Dict[str, Any]] = []
+    for tool in tools:
+        if hasattr(tool, "to_dict"):
+            payload = tool.to_dict()
+            if isinstance(payload, dict):
+                sanitized.append({"type": "function", "function": _strip_deepseek_schema_noise(payload)})
+                continue
+        if isinstance(tool, dict):
+            sanitized.append(_strip_deepseek_schema_noise(tool))
+    return sanitized
+
+
+def _agent_run_compat(
+    agent: Any,
+    prompt: str,
+    *,
+    output_schema: Optional[Type[BaseModel]] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+) -> Any:
+    """Compatibility path for providers where Agent.run() is unstable.
+
+    This path reuses Agno's internal message construction and tool wiring, but
+    bypasses Agent.run() and calls model.response() directly.
+    """
+    agent.initialize_agent()
+    session_id = f"compat:{uuid4()}"
+    user_id = "sagefuzz-compat-user"
+    session = agent._read_or_create_session(session_id=session_id, user_id=user_id)
+    run_context = RunContext(
+        run_id=str(uuid4()),
+        session_id=session_id,
+        user_id=user_id,
+        session_state=session_state or {},
+        dependencies=getattr(agent, "dependencies", None),
+        output_schema=output_schema,
+    )
+    run_response = RunOutput(
+        run_id=run_context.run_id,
+        session_id=session_id,
+        user_id=user_id,
+        agent_name=getattr(agent, "name", None),
+        input=RunInput(input_content=prompt),
+    )
+    processed_tools = agent.get_tools(
+        run_response=run_response,
+        run_context=run_context,
+        session=session,
+        user_id=user_id,
+    )
+    tools = agent._determine_tools_for_model(
+        model=agent.model,
+        processed_tools=processed_tools,
+        run_response=run_response,
+        session=session,
+        run_context=run_context,
+    )
+    run_messages = agent._get_run_messages(
+        run_response=run_response,
+        run_context=run_context,
+        input=prompt,
+        session=session,
+        user_id=user_id,
+        audio=None,
+        images=None,
+        videos=None,
+        files=None,
+        add_history_to_context=None,
+        add_dependencies_to_context=None,
+        add_session_state_to_context=None,
+        tools=tools,
+    )
+    response_format = output_schema
+    response_tools = tools
+    # DeepSeek-compatible path: tool calling + json_schema in one request is unstable.
+    # Let the model produce plain JSON text after tool use, then validate locally.
+    if _has_unstable_schema_mode(agent) and output_schema is not None:
+        response_format = None
+    if _should_use_agent_run_compat(agent) and tools:
+        response_tools = _sanitize_tools_for_deepseek(tools)
+    model_response = agent.model.response(
+        messages=run_messages.messages,
+        tools=response_tools,
+        response_format=response_format,
+        run_response=run_response,
+    )
+    return model_response.content
+
+
+def _agent_run_content(
+    agent: Any,
+    prompt: str,
+    *,
+    output_schema: Optional[Type[BaseModel]] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+) -> Any:
+    """Run an Agno agent, with a compatibility fallback for unstable providers."""
+    try:
+        if _has_unstable_schema_mode(agent) and output_schema is not None:
+            return _agent_run_compat(
+                agent,
+                prompt,
+                output_schema=output_schema,
+                session_state=session_state,
+            )
+        content = agent.run(
+            prompt,
+            output_schema=output_schema,
+            session_state=session_state,
+        ).content
+        if _should_use_agent_run_compat(agent) and isinstance(content, str):
+            normalized = content.strip().lower()
+            if normalized in {"connection error.", "connection error", "api connection error"}:
+                return _agent_run_compat(
+                    agent,
+                    prompt,
+                    output_schema=output_schema,
+                    session_state=session_state,
+                )
+        return content
+    except Exception:
+        if not _should_use_agent_run_compat(agent):
+            raise
+        return _agent_run_compat(
+            agent,
+            prompt,
+            output_schema=output_schema,
+            session_state=session_state,
+        )
 
 
 def _as_non_empty_str(value: Any) -> Optional[str]:
@@ -1403,11 +1562,12 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             f"Agent1 正在执行语义分析（第{_round}/{max_intent_rounds}轮，schema模式，最长等待约{int(cfg.model.timeout_seconds) if cfg.model else 0}s）。"
         )
         try:
-            a1_raw = agent1.run(
+            a1_raw = _agent_run_content(
+                agent1,
                 a1_in_str,
                 output_schema=Agent1Output,
                 session_state=session_state,
-            ).content
+            )
             a1_out = _coerce_schema_output(a1_raw, Agent1Output)
         except Exception as e:
             a1_out = None
@@ -1420,10 +1580,11 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             )
             try:
                 _progress("Agent1 原始输出重试调用已发出，正在等待模型返回。")
-                a1_raw_retry = agent1.run(
+                a1_raw_retry = _agent_run_content(
+                    agent1,
                     a1_in_str,
                     session_state=session_state,
-                ).content
+                )
                 a1_out = _coerce_schema_output(a1_raw_retry, Agent1Output)
             except Exception as e:
                 a1_retry_error = _error_text(e)
@@ -1485,11 +1646,12 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 _progress(
                 f"Agent3 正在审查TaskSpec语义（第{_round}/{max_intent_rounds}轮，最长等待约{int(cfg.model.timeout_seconds) if cfg.model else 0}s）。"
             )
-                task_review_raw = agent3.run(
+                task_review_raw = _agent_run_content(
+                    agent3,
                     task_review_in_str,
                     output_schema=CriticResult,
                     session_state=session_state,
-                ).content
+                )
             except Exception as e:
                 # Avoid blocking generation on review API failures.
                 recorder.record(
@@ -1641,11 +1803,12 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             _progress(
                 f"Agent2 正在生成packet_sequence（第{attempt}/{cfg.max_retries}轮，最长等待约{int(cfg.model.timeout_seconds) if cfg.model else 0}s）。"
             )
-            cand_raw = agent2.run(
+            cand_raw = _agent_run_content(
+                agent2,
                 gen_in_str,
                 output_schema=PacketSequenceCandidate,
                 session_state=session_state,
-            ).content
+            )
         except Exception as e:
             last_feedback = f"Agent2 API error: {_error_text(e)}"
             _progress(f"Agent2 调用失败：{last_feedback}")
@@ -1690,11 +1853,12 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             _progress(
                 f"Agent3 正在审查packet_sequence（第{attempt}/{cfg.max_retries}轮，最长等待约{int(cfg.model.timeout_seconds) if cfg.model else 0}s）。"
             )
-            critic_raw = agent3.run(
+            critic_raw = _agent_run_content(
+                agent3,
                 critic_in_str,
                 output_schema=CriticResult,
                 session_state=session_state,
-            ).content
+            )
         except Exception as e:
             last_feedback = f"Agent3 API error: {_error_text(e)}"
             _progress(f"Agent3 调用失败：{last_feedback}")
@@ -1832,11 +1996,12 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                     _progress(
                         f"Agent4 正在生成场景'{scenario}'的控制面实体（第{attempt}/{cfg.max_retries}轮）。"
                     )
-                    entity_raw = agent4.run(
+                    entity_raw = _agent_run_content(
+                        agent4,
                         entity_gen_in_str,
                         output_schema=RuleSetCandidate,
                         session_state=session_state,
-                    ).content
+                    )
                 except Exception as e:
                     last_entity_feedback = f"Agent4 API error: {_error_text(e)}"
                     _progress(f"Agent4 调用失败：{last_entity_feedback}")
@@ -1895,11 +2060,12 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                     _progress(
                         f"Agent5 正在审查场景'{scenario}'控制面实体（第{attempt}/{cfg.max_retries}轮）。"
                     )
-                    entity_critic_raw = agent5.run(
+                    entity_critic_raw = _agent_run_content(
+                        agent5,
                         entity_critic_in_str,
                         output_schema=CriticResult,
                         session_state=session_state,
-                    ).content
+                    )
                 except Exception as e:
                     last_entity_feedback = f"Agent5 API error: {_error_text(e)}"
                     _progress(f"Agent5 调用失败：{last_entity_feedback}")
@@ -2112,11 +2278,12 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 _progress(
                     f"Agent6 正在生成场景'{scenario}'的Oracle预测（第{attempt}/{cfg.max_retries}轮，最长等待约{int(cfg.model.timeout_seconds) if cfg.model else 0}s）。"
                 )
-                oracle_raw = agent6.run(
+                oracle_raw = _agent_run_content(
+                    agent6,
                     oracle_in_str,
                     output_schema=OraclePredictionCandidate,
                     session_state=session_state,
-                ).content
+                )
             except Exception as e:
                 last_oracle_feedback = f"Agent6 API error: {_error_text(e)}"
                 _progress(f"Agent6 调用失败：{last_oracle_feedback}")

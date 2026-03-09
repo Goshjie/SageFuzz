@@ -1,0 +1,20 @@
+digraph MyParser{
+start [shape=rectangle,label="start
+(hdr.ethernet.etherType)"]
+parse_telemetry [shape=rectangle,label="parse_telemetry
+(hdr.telemetry.nextHeaderType)"]
+parse_ipv4 [shape=rectangle,label="parse_ipv4
+(hdr.ipv4.protocol)"]
+parse_tcp [shape=rectangle,label="parse_tcp"]
+accept [shape=rectangle,label="accept"]
+reject [shape=rectangle,label="reject"]
+start -> parse_ipv4 [label="16w0x800"]
+start -> parse_telemetry [label="16w0x7777"]
+start -> parse_ipv4 [label="16w0x7778"]
+start -> accept [label="default"]
+parse_telemetry -> parse_ipv4 [label="16w0x800"]
+parse_telemetry -> accept [label="default"]
+parse_ipv4 -> parse_tcp [label="8w6"]
+parse_ipv4 -> accept [label="default"]
+parse_tcp -> accept [label="always"]
+}
