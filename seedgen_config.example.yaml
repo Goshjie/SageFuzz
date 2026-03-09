@@ -23,6 +23,33 @@ model:
   timeout_seconds: 120
   max_retries: 3
 
+# Optional: override model config for selected agents.
+# `all_agents` can be used for a full small-model baseline.
+# Individual agent keys override `all_agents` when both are present.
+#
+# Example experiment layouts:
+# 1) Only Agent5 small model:
+# agent_models:
+#   agent5:
+#     model_id: qwen2.5-7b-instruct
+#     base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+#     api_key: ${DASHSCOPE_API_KEY}
+#
+# 2) All agents small model baseline:
+# agent_models:
+#   all_agents:
+#     model_id: qwen2.5-7b-instruct
+#     base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+#     api_key: ${DASHSCOPE_API_KEY}
+#
+# Supported per-agent keys include:
+# - agent1 / semantic_analyzer
+# - agent2 / sequence_constructor
+# - agent3 / constraint_critic
+# - agent4 / entity_generator
+# - agent5 / entity_critic
+# - agent6 / oracle_predictor
+
 # Required: user intent (this system is intent-driven)
 intent:
   feature_under_test: "Stateful firewall directional TCP"

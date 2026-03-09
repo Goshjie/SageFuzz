@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
-from sagefuzz_seedgen.config import AgnoMemoryConfig, ModelConfig, ProgramPaths, RunConfig
+from sagefuzz_seedgen.config import AgentModelOverrides, AgnoMemoryConfig, ModelConfig, ProgramPaths, RunConfig
 from sagefuzz_seedgen.config_file import find_default_config_file, load_config_file
 
 def _path(p: str) -> Path:
@@ -22,6 +22,45 @@ def _as_bool(value: Any, default: bool) -> bool:
         if normalized in {"0", "false", "no", "off"}:
             return False
     return default
+
+
+def _build_model_config(
+    *,
+    section: dict[str, Any],
+    fallback: ModelConfig,
+) -> ModelConfig:
+    return ModelConfig(
+        model_id=str(section.get("model_id") or fallback.model_id),
+        api_key=str(section.get("api_key") or fallback.api_key),
+        base_url=str(section.get("base_url") or fallback.base_url),
+        timeout_seconds=float(section.get("timeout_seconds", fallback.timeout_seconds)),
+        max_retries=int(section.get("max_retries", fallback.max_retries)),
+    )
+
+
+def _build_agent_model_overrides(cfg_data: dict[str, Any], *, base_model: ModelConfig) -> AgentModelOverrides:
+    section = cfg_data.get("agent_models", {})
+    if not isinstance(section, dict):
+        return AgentModelOverrides()
+
+    all_agents_cfg: Optional[ModelConfig] = None
+    raw_all_agents = section.get("all_agents")
+    if isinstance(raw_all_agents, dict):
+        all_agents_cfg = _build_model_config(section=raw_all_agents, fallback=base_model)
+
+    per_agent: dict[str, ModelConfig] = {}
+    for key, value in section.items():
+        if key == "all_agents" or not isinstance(value, dict):
+            continue
+        per_agent[str(key)] = _build_model_config(
+            section=value,
+            fallback=all_agents_cfg or base_model,
+        )
+
+    return AgentModelOverrides(
+        all_agents=all_agents_cfg,
+        per_agent=per_agent,
+    )
 
 def build_arg_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="SageFuzz seed generation: packet_sequence stage (multi-agent)")
@@ -117,6 +156,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             else int(model_section.get("max_retries", env_model.max_retries))
         ),
     )
+    agent_models = _build_agent_model_overrides(cfg_data, base_model=model)
 
     # Optional: allow overriding paths/run config from config file while keeping CLI defaults.
     paths_section = cfg_data.get("paths", {})
@@ -156,6 +196,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     cfg = RunConfig(
         program=program,
         model=model,
+        agent_models=agent_models,
         memory=memory,
         user_intent=intent_section or None,
         max_retries=int(run_section.get("max_retries")) if run_section.get("max_retries") else args.max_retries,

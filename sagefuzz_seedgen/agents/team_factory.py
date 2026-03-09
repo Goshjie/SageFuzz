@@ -15,7 +15,7 @@ from agno.models.xai import xAI
 from agno.team import Team
 
 from sagefuzz_seedgen.agents.prompts_loader import load_prompt
-from sagefuzz_seedgen.config import AgnoMemoryConfig, ModelConfig
+from sagefuzz_seedgen.config import AgentModelOverrides, AgnoMemoryConfig, ModelConfig
 from sagefuzz_seedgen.tools.control_plane_tools import (
     get_action_code_tool,
     get_table_tool,
@@ -114,10 +114,55 @@ def _agent_kwargs(base_kwargs: Dict[str, object], agent_key: str) -> Dict[str, o
     return kwargs
 
 
+_AGENT_MODEL_KEY_ALIASES = {
+    "agent1": {"agent1", "semantic_analyzer", "agent1_semantic_analyzer"},
+    "agent2": {"agent2", "sequence_constructor", "agent2_sequence_constructor"},
+    "agent3": {"agent3", "constraint_critic", "agent3_constraint_critic"},
+    "agent4": {"agent4", "entity_generator", "agent4_entity_generator"},
+    "agent5": {"agent5", "entity_critic", "agent5_entity_critic"},
+    "agent6": {"agent6", "oracle_predictor", "agent6_oracle_predictor"},
+    "team": {"team", "seedgenteam"},
+}
+
+
+def _normalize_agent_model_key(value: str) -> str:
+    return value.strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _resolve_agent_model_cfg(
+    *,
+    agent_key: str,
+    default_cfg: ModelConfig,
+    overrides: Optional[AgentModelOverrides],
+) -> ModelConfig:
+    if overrides is None:
+        return default_cfg
+
+    normalized = _normalize_agent_model_key(agent_key)
+    aliases = _AGENT_MODEL_KEY_ALIASES.get(normalized, {normalized})
+    for key, cfg in overrides.per_agent.items():
+        if _normalize_agent_model_key(key) in aliases:
+            return cfg
+    if overrides.all_agents is not None:
+        return overrides.all_agents
+    return default_cfg
+
+
+def _model_cache_key(model: ModelConfig) -> tuple[str, str, str, float, int]:
+    return (
+        model.model_id,
+        model.api_key,
+        model.base_url,
+        float(model.timeout_seconds),
+        int(model.max_retries),
+    )
+
+
 def build_agents_and_team(
     *,
     model_cfg: ModelConfig,
     prompts_dir: Path,
+    agent_model_overrides: Optional[AgentModelOverrides] = None,
     memory_cfg: Optional[AgnoMemoryConfig] = None,
     memory_user_id: Optional[str] = None,
     session_id_prefix: Optional[str] = None,
@@ -158,7 +203,21 @@ def build_agents_and_team(
         get_action_code_tool,
     ]
 
-    model = _build_model(model_cfg)
+    model_cache: Dict[tuple[str, str, str, float, int], OpenAILike] = {}
+
+    def model_for(agent_key: str) -> OpenAILike:
+        resolved_cfg = _resolve_agent_model_cfg(
+            agent_key=agent_key,
+            default_cfg=model_cfg,
+            overrides=agent_model_overrides,
+        )
+        cache_key = _model_cache_key(resolved_cfg)
+        cached = model_cache.get(cache_key)
+        if cached is None:
+            cached = _build_model(resolved_cfg)
+            model_cache[cache_key] = cached
+        return cached
+
     effective_memory_cfg = memory_cfg or AgnoMemoryConfig()
     db, memory_kwargs = _build_memory_kwargs(
         memory_cfg=effective_memory_cfg,
@@ -169,7 +228,7 @@ def build_agents_and_team(
     agent1 = Agent(
         name="Semantic Analyzer",
         role="semantic_analyzer",
-        model=model,
+        model=model_for("agent1"),
         instructions=a1_prompt,
         tools=tools,
         markdown=False,
@@ -180,7 +239,7 @@ def build_agents_and_team(
     agent2 = Agent(
         name="Sequence Constructor",
         role="sequence_constructor",
-        model=model,
+        model=model_for("agent2"),
         instructions=a2_prompt,
         tools=tools,
         markdown=False,
@@ -191,7 +250,7 @@ def build_agents_and_team(
     agent3 = Agent(
         name="Constraint Critic",
         role="constraint_critic",
-        model=model,
+        model=model_for("agent3"),
         instructions=a3_prompt,
         tools=tools,
         markdown=False,
@@ -202,7 +261,7 @@ def build_agents_and_team(
     agent4 = Agent(
         name="Entity Generator",
         role="entity_generator",
-        model=model,
+        model=model_for("agent4"),
         instructions=a4_prompt,
         tools=tools,
         markdown=False,
@@ -213,7 +272,7 @@ def build_agents_and_team(
     agent5 = Agent(
         name="Entity Critic",
         role="entity_critic",
-        model=model,
+        model=model_for("agent5"),
         instructions=a5_prompt,
         tools=tools,
         markdown=False,
@@ -224,7 +283,7 @@ def build_agents_and_team(
     agent6 = Agent(
         name="Oracle Predictor",
         role="oracle_predictor",
-        model=model,
+        model=model_for("agent6"),
         instructions=a6_prompt,
         tools=tools,
         markdown=False,
@@ -235,7 +294,7 @@ def build_agents_and_team(
     team = Team(
         members=[agent1, agent2, agent3, agent4, agent5, agent6],
         name="SeedgenTeam",
-        model=model,
+        model=model_for("team"),
         share_member_interactions=True,
         add_team_history_to_members=True,
         num_team_history_runs=3,

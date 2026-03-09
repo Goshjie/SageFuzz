@@ -6,7 +6,7 @@ from agno.models.openai.like import OpenAILike
 from agno.models.xai import xAI
 
 from sagefuzz_seedgen.agents.team_factory import _build_model, build_agents_and_team
-from sagefuzz_seedgen.config import AgnoMemoryConfig, ModelConfig
+from sagefuzz_seedgen.config import AgentModelOverrides, AgnoMemoryConfig, ModelConfig
 
 
 class TestTeamFactoryModelSelection(unittest.TestCase):
@@ -86,6 +86,50 @@ class TestTeamFactoryMemoryIntegration(unittest.TestCase):
         self.assertIsNone(agent1.db)
         self.assertFalse(agent1.update_memory_on_run)
         self.assertIsNone(team.db)
+
+    def test_build_agents_and_team_supports_agent5_override(self) -> None:
+        override_cfg = ModelConfig(
+            model_id="qwen2.5-7b-instruct",
+            api_key="small-key",
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            timeout_seconds=45.0,
+            max_retries=1,
+        )
+        overrides = AgentModelOverrides(per_agent={"agent5": override_cfg})
+
+        agent1, _agent2, _agent3, _agent4, agent5, _agent6, team = build_agents_and_team(
+            model_cfg=self.model_cfg,
+            prompts_dir=self.prompts_dir,
+            agent_model_overrides=overrides,
+        )
+
+        self.assertEqual(agent1.model.id, "glm-4.7")
+        self.assertEqual(agent5.model.id, "qwen2.5-7b-instruct")
+        self.assertEqual(team.model.id, "glm-4.7")
+
+    def test_build_agents_and_team_supports_all_agent_override(self) -> None:
+        override_cfg = ModelConfig(
+            model_id="qwen2.5-7b-instruct",
+            api_key="small-key",
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            timeout_seconds=45.0,
+            max_retries=1,
+        )
+        overrides = AgentModelOverrides(all_agents=override_cfg)
+
+        agent1, agent2, agent3, agent4, agent5, agent6, team = build_agents_and_team(
+            model_cfg=self.model_cfg,
+            prompts_dir=self.prompts_dir,
+            agent_model_overrides=overrides,
+        )
+
+        self.assertEqual(agent1.model.id, "qwen2.5-7b-instruct")
+        self.assertEqual(agent2.model.id, "qwen2.5-7b-instruct")
+        self.assertEqual(agent3.model.id, "qwen2.5-7b-instruct")
+        self.assertEqual(agent4.model.id, "qwen2.5-7b-instruct")
+        self.assertEqual(agent5.model.id, "qwen2.5-7b-instruct")
+        self.assertEqual(agent6.model.id, "qwen2.5-7b-instruct")
+        self.assertEqual(team.model.id, "qwen2.5-7b-instruct")
 
 
 if __name__ == "__main__":

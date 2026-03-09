@@ -1523,6 +1523,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
     agent1, agent2, agent3, agent4, agent5, agent6, _team = build_agents_and_team(
         model_cfg=cfg.model,
         prompts_dir=Path("prompts"),
+        agent_model_overrides=cfg.agent_models,
         memory_cfg=cfg.memory,
         memory_user_id=memory_user_id,
         session_id_prefix=run_id,

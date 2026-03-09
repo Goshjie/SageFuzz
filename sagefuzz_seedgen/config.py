@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from os import getenv
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 
 @dataclass(frozen=True)
@@ -46,6 +46,12 @@ class ModelConfig:
 
 
 @dataclass(frozen=True)
+class AgentModelOverrides:
+    all_agents: Optional["ModelConfig"] = None
+    per_agent: Dict[str, "ModelConfig"] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class ProgramPaths:
     bmv2_json: Path
     graphs_dir: Path
@@ -69,6 +75,7 @@ class AgnoMemoryConfig:
 class RunConfig:
     program: ProgramPaths
     model: Optional[ModelConfig]
+    agent_models: AgentModelOverrides = field(default_factory=AgentModelOverrides)
     memory: AgnoMemoryConfig = field(default_factory=AgnoMemoryConfig)
     # Raw user intent dictionary; parsed/validated by workflow.
     user_intent: Optional[dict] = None
