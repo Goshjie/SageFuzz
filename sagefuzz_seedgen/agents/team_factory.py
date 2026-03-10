@@ -10,6 +10,7 @@ install_sqlite_compat()
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
+from agno.models.dashscope import DashScope
 from agno.models.openai.like import OpenAILike
 from agno.models.xai import xAI
 from agno.team import Team
@@ -57,6 +58,15 @@ def _build_model(model: ModelConfig) -> OpenAILike:
     # Prefer Agno native xAI model when talking to xAI endpoints.
     if base_host.endswith("x.ai") or base_host.endswith("api.x.ai"):
         return xAI(
+            id=model.model_id,
+            api_key=model.api_key,
+            base_url=model.base_url,
+            timeout=float(model.timeout_seconds),
+            max_retries=int(model.max_retries),
+        )
+
+    if "dashscope.aliyuncs.com" in base_host or "dashscope-intl.aliyuncs.com" in base_host:
+        return DashScope(
             id=model.model_id,
             api_key=model.api_key,
             base_url=model.base_url,

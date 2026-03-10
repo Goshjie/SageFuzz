@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from agno.models.dashscope import DashScope
 from agno.models.openai.like import OpenAILike
 from agno.models.xai import xAI
 
@@ -32,6 +33,17 @@ class TestTeamFactoryModelSelection(unittest.TestCase):
         model = _build_model(cfg)
         self.assertIsInstance(model, OpenAILike)
         self.assertNotIsInstance(model, xAI)
+
+    def test_build_model_uses_native_dashscope_for_dashscope_base_url(self) -> None:
+        cfg = ModelConfig(
+            model_id="qwen2.5-7b-instruct",
+            api_key="test-key",
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            timeout_seconds=30.0,
+            max_retries=2,
+        )
+        model = _build_model(cfg)
+        self.assertIsInstance(model, DashScope)
 
 
 class TestTeamFactoryMemoryIntegration(unittest.TestCase):

@@ -19,6 +19,10 @@ model:
   model_id: gpt-5.4
   base_url: https://right.codes/codex/v1
   api_key: "sk-8316bfeece654d87b8f0c81acca68ff3"
+  # codex for me
+  model_id: gpt-5.4
+  base_url: https://api-vip.codex-for.me/v1
+  api_key: "clp_d626a8778880522f5b9bed7848c72a00810ecc9dc44c9b99e08ccf8591231d4b"
   # Optional model transport settings for unstable networks.
   timeout_seconds: 120
   max_retries: 3

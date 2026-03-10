@@ -1712,7 +1712,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 qtext = q.get("question_zh")
             if not isinstance(field, str) or not isinstance(qtext, str):
                 continue
-            ans = input(f"{i}. {qtext} ").strip()
+            ans = _prompt_with_default(f"{i}. {qtext}", None).strip()
             if ans == "":
                 continue
             if field == "include_negative_case":
