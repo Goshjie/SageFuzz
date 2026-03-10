@@ -1,0 +1,27 @@
+{
+  "created_at_utc": "2026-03-10T141817Z",
+  "families": [
+    "load_distribution_congestion_feedback",
+    "telemetry_monitoring",
+    "threshold_state_accumulation"
+  ],
+  "counts": {
+    "fallback_only": 2,
+    "direct_only": 118,
+    "mixed": 120
+  },
+  "family_breakdown": {
+    "load_distribution_congestion_feedback": {
+      "fallback_only": 0,
+      "direct_only": 23
+    },
+    "telemetry_monitoring": {
+      "fallback_only": 1,
+      "direct_only": 32
+    },
+    "threshold_state_accumulation": {
+      "fallback_only": 1,
+      "direct_only": 63
+    }
+  }
+}

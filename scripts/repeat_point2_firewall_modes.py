@@ -17,13 +17,18 @@ def _utc_ts() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%M%SZ")
 
 
+def _slugify_model_id(model_id: Any) -> str:
+    raw = str(model_id or "unknown-model").strip().lower()
+    raw = raw.replace("/", "_")
+    return "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in raw).strip("._-") or "unknown-model"
+
+
 def main() -> int:
     repeats = int(sys.argv[1]) if len(sys.argv) > 1 else 3
-    experiment_dir = ROOT / "runs" / f"point2_firewall_repeats_{_utc_ts()}"
-    experiment_dir.mkdir(parents=True, exist_ok=True)
-
     baseline_model = _read_baseline_model()
     small_model = _read_small_model()
+    experiment_dir = ROOT / "runs" / f"point2_firewall_repeats__{_slugify_model_id(small_model.get('model_id'))}__{_utc_ts()}"
+    experiment_dir.mkdir(parents=True, exist_ok=True)
     firewall_task = next(task for task in TASKS if task.name == "firewall")
 
     results: List[Dict[str, Any]] = []

@@ -1,0 +1,95 @@
+{
+  "experiment_date": "2026-03-10",
+  "model_id": "qwen-plus",
+  "provider": {
+    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  },
+  "notes": [
+    "This record consolidates qwen-plus full-program experiments run on March 10, 2026.",
+    "Token accounting was added during the session, so only later runs contain token usage in their index payloads.",
+    "Older runs before token accounting remain listed here for completeness but have null token counts.",
+    "A pre-fix second-level run_id collision affected one older load_balancer run directory; the listed index is still the reference artifact for that experiment."
+  ],
+  "programs": [
+    {
+      "program": "firewall",
+      "index_path": "runs/2026-03-10T085627Z_packet_sequence_index.json",
+      "task_id": "stateful_firewall_validation",
+      "final_status": "PASS",
+      "generation_mode": "packet_and_entities",
+      "total_cases": 2,
+      "positive_cases": 1,
+      "negative_cases": 1,
+      "token_usage_recorded": false,
+      "input_tokens": null,
+      "output_tokens": null,
+      "total_tokens": null,
+      "intent_alignment_judgement": "confirmed",
+      "intent_alignment_note": "Internal-initiated connection is allowed and external-initiated connection is denied; testcase semantics were manually checked."
+    },
+    {
+      "program": "fast_reroute",
+      "index_path": "runs/2026-03-10T090539Z_packet_sequence_index.json",
+      "task_id": "fast-reroute-h2-h4-ipv4",
+      "final_status": "PASS",
+      "generation_mode": "packet_and_entities",
+      "total_cases": 3,
+      "positive_cases": 3,
+      "negative_cases": 0,
+      "token_usage_recorded": false,
+      "input_tokens": null,
+      "output_tokens": null,
+      "total_tokens": null,
+      "intent_alignment_judgement": "confirmed",
+      "intent_alignment_note": "Testcases include link-failure and controller-reconvergence operator actions matching the intended workflow."
+    },
+    {
+      "program": "load_balancer",
+      "index_path": "runs/2026-03-10T115615Z_packet_sequence_index.json",
+      "task_id": "forwarding_congestion_aware_load_balance_h1_to_h5",
+      "final_status": "PASS",
+      "generation_mode": "packet_and_entities",
+      "total_cases": 2,
+      "positive_cases": 2,
+      "negative_cases": 0,
+      "token_usage_recorded": false,
+      "input_tokens": null,
+      "output_tokens": null,
+      "total_tokens": null,
+      "intent_alignment_judgement": "partially_confirmed",
+      "intent_alignment_note": "Generation succeeded structurally; final intent-level semantic review should still be repeated on a fresh post-fix run before using it as thesis-grade evidence."
+    },
+    {
+      "program": "link_monitor",
+      "index_path": "runs/2026-03-10T121727612511Z_packet_sequence_index.json",
+      "task_id": "telemetry_monitoring_fallback",
+      "final_status": "PASS",
+      "generation_mode": "packet_only",
+      "total_cases": 1,
+      "positive_cases": 1,
+      "negative_cases": 0,
+      "token_usage_recorded": true,
+      "input_tokens": 83582,
+      "output_tokens": 6196,
+      "total_tokens": 89778,
+      "intent_alignment_judgement": "usable_with_fallback",
+      "intent_alignment_note": "Generation relies on telemetry packet-only fallback rather than stable entity generation, but the testcase now matches the intended probe-driven monitoring structure."
+    },
+    {
+      "program": "heavy_hitter",
+      "index_path": "runs/2026-03-10T122110777805Z_packet_sequence_index.json",
+      "task_id": "heavy_hitter_threshold_fallback",
+      "final_status": "PASS",
+      "generation_mode": "packet_and_entities",
+      "total_cases": 3,
+      "positive_cases": 2,
+      "negative_cases": 1,
+      "token_usage_recorded": true,
+      "input_tokens": 174109,
+      "output_tokens": 11708,
+      "total_tokens": 185817,
+      "intent_alignment_judgement": "confirmed",
+      "intent_alignment_note": "Latest fallback contract produces below-threshold forwarding, above-threshold drop, and different-flow isolation with a fixed same-flow 5-tuple."
+    }
+  ]
+}

@@ -1,15 +1,21 @@
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from sagefuzz_seedgen.schemas import Agent1Output, ObservationIntentSpec, OperatorActionSpec, PacketSpec, TaskSpec, UserQuestion
 from sagefuzz_seedgen.workflow.packet_sequence_workflow import (
     _apply_initial_intent_answer,
+    _apply_load_distribution_fallback,
     _apply_operator_action_fallback,
+    _apply_telemetry_monitoring_fallback,
     _coerce_schema_output,
     _group_packets_by_scenario,
+    _materialize_expected_packet_value,
+    _normalize_task_with_intent_fallback,
     _normalize_test_objective,
     _resolve_generation_mode,
     _resolve_output_paths,
+    _synthesize_task_from_intent,
     _split_case_records_by_kind,
 )
 
@@ -83,6 +89,17 @@ class TestWorkflowOutputCoercion(unittest.TestCase):
         self.assertEqual(
             _resolve_generation_mode(intent_payload={"test_objective": "数据平面行为"}, task=task),
             "packet_and_entities",
+        )
+        telemetry_task = TaskSpec(
+            task_id="t-telemetry-mode",
+            task_description="monitor",
+            feature_under_test="traffic_monitoring",
+            intent_category="telemetry_monitoring",
+            role_bindings={"host_a": "h1", "host_b": "h3"},
+        )
+        self.assertEqual(
+            _resolve_generation_mode(intent_payload={"test_objective": "数据平面行为"}, task=telemetry_task),
+            "packet_only",
         )
         task_packet_only = task.model_copy(update={"generation_mode": "packet_only"})
         self.assertEqual(
@@ -210,6 +227,187 @@ class TestWorkflowOutputCoercion(unittest.TestCase):
         )
         self.assertIn("host_a", task.role_bindings)
         self.assertIn("host_b", task.role_bindings)
+
+    def test_materialize_expected_packet_value_handles_one_of_dict(self) -> None:
+        task = TaskSpec(
+            task_id="t-flags",
+            task_description="d",
+            feature_under_test="f",
+            role_bindings={"initiator": "h1", "responder": "h2"},
+        )
+        ctx = SimpleNamespace(host_info={"h1": {"ip": "10.0.0.1/24", "mac": "00:00:00:00:00:01"}, "h2": {"ip": "10.0.0.2/24", "mac": "00:00:00:00:00:02"}})
+        value = _materialize_expected_packet_value(
+            field_name="TCP.flags",
+            expected={"one_of": ["0x02", 2, "SYN"]},
+            ctx=ctx,
+            task=task,
+            tx_host="h1",
+            rx_host="h2",
+            packet_id=1,
+            step_index=1,
+        )
+        self.assertEqual(value, "0x02")
+
+    def test_materialize_expected_packet_value_keeps_fixed_congest_flow_constant(self) -> None:
+        task = TaskSpec(
+            task_id="t-heavy",
+            task_description="d",
+            feature_under_test="f",
+            role_bindings={"initiator": "h1", "responder": "h2"},
+        )
+        ctx = SimpleNamespace(host_info={"h1": {}, "h2": {}})
+        v1 = _materialize_expected_packet_value(
+            field_name="TCP.sport",
+            expected="fixed_to_congest_flow",
+            ctx=ctx,
+            task=task,
+            tx_host="h1",
+            rx_host="h2",
+            packet_id=1,
+            step_index=1,
+        )
+        v2 = _materialize_expected_packet_value(
+            field_name="TCP.sport",
+            expected="fixed_to_congest_flow",
+            ctx=ctx,
+            task=task,
+            tx_host="h1",
+            rx_host="h2",
+            packet_id=2,
+            step_index=2,
+        )
+        self.assertEqual(v1, 12000)
+        self.assertEqual(v2, 12000)
+
+    def test_apply_telemetry_monitoring_fallback_forces_packet_only(self) -> None:
+        task = TaskSpec.model_validate(
+            {
+                "task_id": "telemetry-task",
+                "task_description": "monitor link utilization",
+                "feature_under_test": "traffic_monitoring",
+                "intent_category": "telemetry_monitoring",
+                "role_bindings": {"initiator": "h1", "responder": "h3"},
+                "generation_mode": "packet_and_entities",
+                "require_positive_and_negative": False,
+                "sequence_contract": [
+                    {
+                        "scenario": "positive",
+                        "kind": "positive",
+                        "required": True,
+                        "allow_additional_packets": False,
+                        "steps": [
+                            {
+                                "tx_role": "initiator",
+                                "rx_role": "responder",
+                                "protocol_stack": ["Ethernet", "probe"],
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+        ctx = SimpleNamespace(
+            topology={"links": [["s1", "s2"]]},
+            headers_by_name={"probe": {}, "probe_fwd": {}},
+        )
+        patched = _apply_telemetry_monitoring_fallback(ctx=ctx, intent_payload={"intent_text": "probe monitor"}, task=task)
+        self.assertEqual(patched.generation_mode, "packet_only")
+        self.assertEqual(patched.sequence_contract[0].steps[-1].protocol_stack, ["Ethernet", "probe", "probe_fwd"])
+
+    def test_apply_load_distribution_fallback_adds_multi_flow_hints(self) -> None:
+        task = TaskSpec.model_validate(
+            {
+                "task_id": "lb-task",
+                "task_description": "load balancing",
+                "feature_under_test": "forwarding_behavior",
+                "intent_category": "load_distribution",
+                "role_bindings": {"initiator": "h1", "responder": "h5"},
+                "require_positive_and_negative": False,
+                "sequence_contract": [
+                    {
+                        "scenario": "baseline_load_distribution",
+                        "kind": "positive",
+                        "required": True,
+                        "allow_additional_packets": False,
+                        "steps": [
+                            {
+                                "tx_role": "initiator",
+                                "rx_role": "responder",
+                                "protocol_stack": ["Ethernet", "IPv4", "TCP"],
+                            }
+                        ],
+                    },
+                    {
+                        "scenario": "congestion_induced_failover",
+                        "kind": "positive",
+                        "required": True,
+                        "allow_additional_packets": False,
+                        "steps": [
+                            {
+                                "tx_role": "initiator",
+                                "rx_role": "responder",
+                                "protocol_stack": ["Ethernet", "IPv4", "TCP"],
+                            }
+                        ],
+                    },
+                ],
+            }
+        )
+        patched = _apply_load_distribution_fallback(intent_payload={"intent_text": "load balancing with congestion"}, task=task)
+        self.assertEqual(patched.sequence_contract[0].steps[0].field_expectations["TCP.sport"], "flow_hash_baseline")
+        self.assertEqual(patched.sequence_contract[1].steps[0].field_expectations["TCP.sport"], "new_flow_different_hash")
+
+    def test_synthesize_task_from_intent_builds_heavy_hitter_contract(self) -> None:
+        ctx = SimpleNamespace(
+            host_info={"h1": {}, "h2": {}, "h3": {}},
+            headers_by_name={},
+        )
+        task = _synthesize_task_from_intent(
+            ctx=ctx,
+            intent_payload={"intent_text": "验证 heavy hitter 检测功能，让 h1 向 h2 发送同一条五元组 TCP 流并在阈值后丢弃。"},
+        )
+        self.assertIsNotNone(task)
+        assert task is not None
+        self.assertEqual(task.intent_category, "stateful_policy")
+        self.assertEqual(task.sequence_contract[1].kind, "negative")
+
+    def test_normalize_task_with_intent_fallback_replaces_incomplete_heavy_hitter_task(self) -> None:
+        ctx = SimpleNamespace(
+            host_info={"h1": {}, "h2": {}, "h3": {}},
+            headers_by_name={},
+        )
+        original = TaskSpec.model_validate(
+            {
+                "task_id": "hh-original",
+                "task_description": "heavy hitter task",
+                "feature_under_test": "forwarding_behavior",
+                "intent_category": "forwarding_behavior",
+                "role_bindings": {"initiator": "h1", "responder": "h2"},
+                "require_positive_and_negative": True,
+                "sequence_contract": [
+                    {
+                        "scenario": "positive_only",
+                        "kind": "positive",
+                        "required": True,
+                        "allow_additional_packets": False,
+                        "steps": [
+                            {
+                                "tx_role": "initiator",
+                                "rx_role": "responder",
+                                "protocol_stack": ["Ethernet", "IPv4", "TCP"],
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+        normalized = _normalize_task_with_intent_fallback(
+            ctx=ctx,
+            intent_payload={"intent_text": "验证 heavy hitter 检测功能，让 h1 到 h2 的 TCP 流超过阈值后被丢弃。"},
+            task=original,
+        )
+        self.assertEqual(normalized.intent_category, "stateful_policy")
+        self.assertTrue(any(contract.kind == "negative" for contract in normalized.sequence_contract))
 
 
 if __name__ == "__main__":

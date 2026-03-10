@@ -377,6 +377,46 @@ class TestValidation(unittest.TestCase):
         self.assertEqual(result.status, "FAIL")
         self.assertIn("repeat_count", result.feedback)
 
+    def test_validate_packet_sequence_contract_accepts_symbolic_new_flow_hash(self) -> None:
+        task = TaskSpec.model_validate(
+            {
+                "task_id": "lb-1",
+                "task_description": "load balance with new flows",
+                "feature_under_test": "forwarding_behavior",
+                "intent_category": "load_distribution",
+                "role_bindings": {"initiator": "h1", "responder": "h3"},
+                "require_positive_and_negative": False,
+                "sequence_contract": [
+                    {
+                        "scenario": "congestion_induced_failover",
+                        "kind": "positive",
+                        "required": True,
+                        "allow_additional_packets": False,
+                        "steps": [
+                            {
+                                "tx_role": "initiator",
+                                "rx_role": "responder",
+                                "protocol_stack": ["Ethernet", "IPv4", "TCP"],
+                                "repeat_count": 1,
+                                "field_expectations": {"TCP.sport": "new_flow_different_hash", "TCP.dport": 80},
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+        packets = [
+            PacketSpec(
+                packet_id=1,
+                tx_host="h1",
+                scenario="congestion_induced_failover",
+                protocol_stack=["Ethernet", "IPv4", "TCP"],
+                fields={"IPv4.dst": "10.0.3.3", "Ethernet.dst": "08:00:00:00:03:33", "TCP.sport": 22011, "TCP.dport": 80},
+            )
+        ]
+        result = validate_packet_sequence_contract(ctx=self.ctx, task=task, packet_sequence=packets)
+        self.assertEqual(result.status, "PASS")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,545 @@
+[
+  {
+    "sample_id": "telemetry_repair_001",
+    "family": "telemetry_monitoring",
+    "source_kind": "repair_from_feedback",
+    "user_intent": {
+      "intent_text": "验证链路利用率监控功能。选择 h1 到 h3 通信路径上的任意一条链路作为监控对象，使用程序已有的 probe 探测包从 h1 发送到 h3，配合持续流量至少 20 个包来触发可观测的链路利用率变化。只需要一个正向场景，成功标准是 probe 回包或监控结果中能看到该链路的利用率数值大于 0。",
+      "feature_under_test": "traffic_monitoring",
+      "topology_mapping": "关注 h1 到 h3 的通信路径，监控对象为该路径上的任意一条链路。",
+      "observation_target": "h1 到 h3 路径上一条被监控链路的利用率",
+      "observation_method": "使用程序已有的 probe 探测包，并以 probe 回包或监控结果作为观测依据。",
+      "expected_observation": "在持续业务流量驱动后，观测到的链路利用率数值应大于 0。",
+      "traffic_pattern": "先发送至少 20 个包的持续流量，再发送 probe 相关探测包。",
+      "include_negative_case": false,
+      "test_objective": "data_plane_behavior"
+    },
+    "candidate_task": {
+      "task_id": "traffic_monitoring_h1_h3_probe_20pkts",
+      "task_description": "Validate link utilization monitoring functionality on the h1→h3 path using sustained probe traffic (≥20 packets) and verify non-zero utilization via probe replies or monitoring results.",
+      "feature_under_test": "traffic_monitoring",
+      "intent_category": "telemetry_monitoring",
+      "observation_focus": "link_utilization",
+      "observation_method": "probe_reply_or_monitoring_read",
+      "expected_observation_semantics": "non_zero_utilization_value",
+      "operator_actions": [],
+      "observation_requirements": [
+        {
+          "order": 1,
+          "action_type": "read_register",
+          "target_hint": "link_load_register",
+          "timing": "after_scenario",
+          "purpose": "verify link utilization register updated to > 0 after sustained probe traffic"
+        },
+        {
+          "order": 2,
+          "action_type": "read_counter",
+          "target_hint": "monitored_link_counter",
+          "timing": "after_scenario",
+          "purpose": "verify link counter incremented after sustained probe traffic"
+        }
+      ],
+      "traffic_pattern": "sustained_then_probe",
+      "role_bindings": {
+        "initiator": "h1",
+        "responder": "h3",
+        "monitored_link": "auto_select_from_h1_h3_path"
+      },
+      "sequence_contract": [
+        {
+          "scenario": "positive_monitoring_observation",
+          "kind": "positive",
+          "required": true,
+          "scenario_goal": "Demonstrate that sustained probe traffic triggers observable link utilization > 0 on a monitored link along h1→h3 path.",
+          "expected_observation": "Link utilization value for the selected monitored link is > 0, observed either in probe reply fields or via explicit monitoring read result.",
+          "steps": [
+            {
+              "tx_role": "initiator",
+              "rx_role": "responder",
+              "protocol_stack": [
+                "Ethernet",
+                "IPv4",
+                "UDP"
+              ],
+              "repeat_count": 20,
+              "traffic_profile": "sustained",
+              "field_expectations": {}
+            },
+            {
+              "tx_role": "initiator",
+              "rx_role": "responder",
+              "protocol_stack": [
+                "Ethernet",
+                "ProbeHeader",
+                "UDP"
+              ],
+              "repeat_count": 1,
+              "traffic_profile": "probe",
+              "field_expectations": {}
+            }
+          ],
+          "field_relations": [],
+          "allow_additional_packets": true
+        }
+      ],
+      "require_positive_and_negative": false,
+      "generation_mode": "packet_and_entities",
+      "forbidden_tables": []
+    },
+    "critic_feedback": "The sequence_contract violates telemetry probe semantics in multiple ways: (1) The first two steps use 'ProbeHeader' in the protocol_stack, but no such header is confirmed by parser evidence — tool `get_parser_paths()` must be called to verify legal stacks, and `search_p4_source('ProbeHeader')` or `search_p4_source('probe')` is needed to confirm existence and casing; (2) Step 1 and 2 incorrectly set `Ethernet.etherType` to `0x0800` (IPv4), contradicting intent and typical probe design — if probe packets are custom, they almost certainly use a dedicated EtherType (e.g., `0x0812` as used in step 3); (3) Step 3 uses `['Ethernet','probe','probe_fwd']`, but `get_parser_paths()` must be queried to validate whether this exact stack is legal — if not, the packet is malformed and won't parse; (4) The `field_expectations` for step 3 include `probe.hop_cnt` and `probe_fwd.egress_spec`, but `get_header_definitions()` has not been consulted to confirm those fields exist and have correct names/bits; (5) The sustained traffic step (repeat_count=20) is correctly sized per user intent, but it must use the *same* legal probe parser path as the query/response — mixing inconsistent stacks across steps breaks semantic coherence; (6) The task lacks any verification that the probe response carries utilization data — `observation_requirements[0]` says 'inspect_probe_response', but the contract does not mandate sending a *response-triggering* probe (e.g., one with `probe.type == QUERY`) nor define expected fields in the reply (e.g., `probe_resp.utilization`). All of these gaps must be resolved using parser/source tools before packet generation.",
+    "target_task": {
+      "task_id": "telemetry_monitoring_fallback",
+      "task_description": "验证链路利用率监控功能。选择 h1 到 h3 通信路径上的任意一条链路作为监控对象，使用程序已有的 probe 探测包从 h1 发送到 h3，配合持续流量至少 20 个包来触发可观测的链路利用率变化。只需要一个正向场景，成功标准是 probe 回包或监控结果中能看到该链路的利用率数值大于 0。",
+      "feature_under_test": "traffic_monitoring",
+      "intent_category": "telemetry_monitoring",
+      "observation_focus": "one monitored switch-to-switch link on the h1->h3 path",
+      "observation_method": "probe_response",
+      "expected_observation_semantics": "the returned probe observation should report utilization greater than zero after sustained traffic",
+      "operator_actions": [],
+      "observation_requirements": [
+        {
+          "order": 1,
+          "action_type": "custom",
+          "target_hint": "inspect_probe_response",
+          "timing": "after_scenario",
+          "purpose": "verify the probe response exposes a non-zero utilization value after traffic"
+        }
+      ],
+      "traffic_pattern": null,
+      "role_bindings": {
+        "traffic_src": "h1",
+        "traffic_dst": "h3",
+        "probe_src": "h1",
+        "probe_dst": "h3"
+      },
+      "sequence_contract": [
+        {
+          "scenario": "positive",
+          "kind": "positive",
+          "required": true,
+          "scenario_goal": "drive sustained traffic and then issue a probe-based query for link utilization",
+          "expected_observation": "probe response includes utilization data greater than zero",
+          "steps": [
+            {
+              "tx_role": "traffic_src",
+              "rx_role": "traffic_dst",
+              "protocol_stack": [
+                "Ethernet",
+                "IPv4"
+              ],
+              "repeat_count": 20,
+              "traffic_profile": "sustained_background_traffic",
+              "field_expectations": {
+                "Ethernet.etherType": "0x0800"
+              }
+            },
+            {
+              "tx_role": "probe_src",
+              "rx_role": "probe_dst",
+              "protocol_stack": [
+                "Ethernet",
+                "probe",
+                "probe_fwd"
+              ],
+              "repeat_count": 1,
+              "traffic_profile": "probe_query",
+              "field_expectations": {
+                "Ethernet.etherType": "0x0812",
+                "probe.hop_cnt": 0,
+                "probe_fwd.egress_spec": 1
+              }
+            }
+          ],
+          "field_relations": [],
+          "allow_additional_packets": false
+        }
+      ],
+      "require_positive_and_negative": false,
+      "generation_mode": "packet_only",
+      "forbidden_tables": []
+    },
+    "prompt": "{\n  \"task\": \"Repair or complete a TaskSpec for an Agent1 fallback model.\",\n  \"family\": \"telemetry_monitoring\",\n  \"source_kind\": \"repair_from_feedback\",\n  \"user_intent\": {\n    \"intent_text\": \"验证链路利用率监控功能。选择 h1 到 h3 通信路径上的任意一条链路作为监控对象，使用程序已有的 probe 探测包从 h1 发送到 h3，配合持续流量至少 20 个包来触发可观测的链路利用率变化。只需要一个正向场景，成功标准是 probe 回包或监控结果中能看到该链路的利用率数值大于 0。\",\n    \"feature_under_test\": \"traffic_monitoring\",\n    \"topology_mapping\": \"关注 h1 到 h3 的通信路径，监控对象为该路径上的任意一条链路。\",\n    \"observation_target\": \"h1 到 h3 路径上一条被监控链路的利用率\",\n    \"observation_method\": \"使用程序已有的 probe 探测包，并以 probe 回包或监控结果作为观测依据。\",\n    \"expected_observation\": \"在持续业务流量驱动后，观测到的链路利用率数值应大于 0。\",\n    \"traffic_pattern\": \"先发送至少 20 个包的持续流量，再发送 probe 相关探测包。\",\n    \"include_negative_case\": false,\n    \"test_objective\": \"data_plane_behavior\"\n  },\n  \"candidate_task\": {\n    \"task_id\": \"traffic_monitoring_h1_h3_probe_20pkts\",\n    \"task_description\": \"Validate link utilization monitoring functionality on the h1→h3 path using sustained probe traffic (≥20 packets) and verify non-zero utilization via probe replies or monitoring results.\",\n    \"feature_under_test\": \"traffic_monitoring\",\n    \"intent_category\": \"telemetry_monitoring\",\n    \"observation_focus\": \"link_utilization\",\n    \"observation_method\": \"probe_reply_or_monitoring_read\",\n    \"expected_observation_semantics\": \"non_zero_utilization_value\",\n    \"operator_actions\": [],\n    \"observation_requirements\": [\n      {\n        \"order\": 1,\n        \"action_type\": \"read_register\",\n        \"target_hint\": \"link_load_register\",\n        \"timing\": \"after_scenario\",\n        \"purpose\": \"verify link utilization register updated to > 0 after sustained probe traffic\"\n      },\n      {\n        \"order\": 2,\n        \"action_type\": \"read_counter\",\n        \"target_hint\": \"monitored_link_counter\",\n        \"timing\": \"after_scenario\",\n        \"purpose\": \"verify link counter incremented after sustained probe traffic\"\n      }\n    ],\n    \"traffic_pattern\": \"sustained_then_probe\",\n    \"role_bindings\": {\n      \"initiator\": \"h1\",\n      \"responder\": \"h3\",\n      \"monitored_link\": \"auto_select_from_h1_h3_path\"\n    },\n    \"sequence_contract\": [\n      {\n        \"scenario\": \"positive_monitoring_observation\",\n        \"kind\": \"positive\",\n        \"required\": true,\n        \"scenario_goal\": \"Demonstrate that sustained probe traffic triggers observable link utilization > 0 on a monitored link along h1→h3 path.\",\n        \"expected_observation\": \"Link utilization value for the selected monitored link is > 0, observed either in probe reply fields or via explicit monitoring read result.\",\n        \"steps\": [\n          {\n            \"tx_role\": \"initiator\",\n            \"rx_role\": \"responder\",\n            \"protocol_stack\": [\n              \"Ethernet\",\n              \"IPv4\",\n              \"UDP\"\n            ],\n            \"repeat_count\": 20,\n            \"traffic_profile\": \"sustained\",\n            \"field_expectations\": {}\n          },\n          {\n            \"tx_role\": \"initiator\",\n            \"rx_role\": \"responder\",\n            \"protocol_stack\": [\n              \"Ethernet\",\n              \"ProbeHeader\",\n              \"UDP\"\n            ],\n            \"repeat_count\": 1,\n            \"traffic_profile\": \"probe\",\n            \"field_expectations\": {}\n          }\n        ],\n        \"field_relations\": [],\n        \"allow_additional_packets\": true\n      }\n    ],\n    \"require_positive_and_negative\": false,\n    \"generation_mode\": \"packet_and_entities\",\n    \"forbidden_tables\": []\n  },\n  \"critic_feedback\": \"The sequence_contract violates telemetry probe semantics in multiple ways: (1) The first two steps use 'ProbeHeader' in the protocol_stack, but no such header is confirmed by parser evidence — tool `get_parser_paths()` must be called to verify legal stacks, and `search_p4_source('ProbeHeader')` or `search_p4_source('probe')` is needed to confirm existence and casing; (2) Step 1 and 2 incorrectly set `Ethernet.etherType` to `0x0800` (IPv4), contradicting intent and typical probe design — if probe packets are custom, they almost certainly use a dedicated EtherType (e.g., `0x0812` as used in step 3); (3) Step 3 uses `['Ethernet','probe','probe_fwd']`, but `get_parser_paths()` must be queried to validate whether this exact stack is legal — if not, the packet is malformed and won't parse; (4) The `field_expectations` for step 3 include `probe.hop_cnt` and `probe_fwd.egress_spec`, but `get_header_definitions()` has not been consulted to confirm those fields exist and have correct names/bits; (5) The sustained traffic step (repeat_count=20) is correctly sized per user intent, but it must use the *same* legal probe parser path as the query/response — mixing inconsistent stacks across steps breaks semantic coherence; (6) The task lacks any verification that the probe response carries utilization data — `observation_requirements[0]` says 'inspect_probe_response', but the contract does not mandate sending a *response-triggering* probe (e.g., one with `probe.type == QUERY`) nor define expected fields in the reply (e.g., `probe_resp.utilization`). All of these gaps must be resolved using parser/source tools before packet generation.\",\n  \"output_requirement\": \"Return only the corrected TaskSpec JSON.\"\n}",
+    "completion": "{\n  \"task_id\": \"telemetry_monitoring_fallback\",\n  \"task_description\": \"验证链路利用率监控功能。选择 h1 到 h3 通信路径上的任意一条链路作为监控对象，使用程序已有的 probe 探测包从 h1 发送到 h3，配合持续流量至少 20 个包来触发可观测的链路利用率变化。只需要一个正向场景，成功标准是 probe 回包或监控结果中能看到该链路的利用率数值大于 0。\",\n  \"feature_under_test\": \"traffic_monitoring\",\n  \"intent_category\": \"telemetry_monitoring\",\n  \"observation_focus\": \"one monitored switch-to-switch link on the h1->h3 path\",\n  \"observation_method\": \"probe_response\",\n  \"expected_observation_semantics\": \"the returned probe observation should report utilization greater than zero after sustained traffic\",\n  \"operator_actions\": [],\n  \"observation_requirements\": [\n    {\n      \"order\": 1,\n      \"action_type\": \"custom\",\n      \"target_hint\": \"inspect_probe_response\",\n      \"timing\": \"after_scenario\",\n      \"purpose\": \"verify the probe response exposes a non-zero utilization value after traffic\"\n    }\n  ],\n  \"traffic_pattern\": null,\n  \"role_bindings\": {\n    \"traffic_src\": \"h1\",\n    \"traffic_dst\": \"h3\",\n    \"probe_src\": \"h1\",\n    \"probe_dst\": \"h3\"\n  },\n  \"sequence_contract\": [\n    {\n      \"scenario\": \"positive\",\n      \"kind\": \"positive\",\n      \"required\": true,\n      \"scenario_goal\": \"drive sustained traffic and then issue a probe-based query for link utilization\",\n      \"expected_observation\": \"probe response includes utilization data greater than zero\",\n      \"steps\": [\n        {\n          \"tx_role\": \"traffic_src\",\n          \"rx_role\": \"traffic_dst\",\n          \"protocol_stack\": [\n            \"Ethernet\",\n            \"IPv4\"\n          ],\n          \"repeat_count\": 20,\n          \"traffic_profile\": \"sustained_background_traffic\",\n          \"field_expectations\": {\n            \"Ethernet.etherType\": \"0x0800\"\n          }\n        },\n        {\n          \"tx_role\": \"probe_src\",\n          \"rx_role\": \"probe_dst\",\n          \"protocol_stack\": [\n            \"Ethernet\",\n            \"probe\",\n            \"probe_fwd\"\n          ],\n          \"repeat_count\": 1,\n          \"traffic_profile\": \"probe_query\",\n          \"field_expectations\": {\n            \"Ethernet.etherType\": \"0x0812\",\n            \"probe.hop_cnt\": 0,\n            \"probe_fwd.egress_spec\": 1\n          }\n        }\n      ],\n      \"field_relations\": [],\n      \"allow_additional_packets\": false\n    }\n  ],\n  \"require_positive_and_negative\": false,\n  \"generation_mode\": \"packet_only\",\n  \"forbidden_tables\": []\n}",
+    "provenance": {
+      "run_id": "2026-03-10T121727612511Z",
+      "intent_path": "runs/agent_responses/2026-03-10T121727612511Z/agent1_semantic_analyzer/initial_intent_intake_00.json",
+      "candidate_task_path": "runs/agent_responses/2026-03-10T121727612511Z/agent1_semantic_analyzer/agent1_output_01.json",
+      "target_task_path": "runs/agent_responses/2026-03-10T121727612511Z/deterministic_validator/task_contract_review_fallback_accept_05.json"
+    }
+  },
+  {
+    "sample_id": "telemetry_fallback_001",
+    "family": "telemetry_monitoring",
+    "source_kind": "fallback_from_intent",
+    "user_intent": {
+      "intent_text": "验证链路利用率监控功能。选择 h1 到 h3 通信路径上的任意一条链路作为监控对象，使用程序已有的 probe 探测包从 h1 发送到 h3，配合持续流量至少 20 个包来触发可观测的链路利用率变化。只需要一个正向场景，成功标准是 probe 回包或监控结果中能看到该链路的利用率数值大于 0。",
+      "feature_under_test": "traffic_monitoring",
+      "topology_mapping": "关注 h1 到 h3 的通信路径，监控对象为该路径上的任意一条链路。",
+      "observation_target": "h1 到 h3 路径上一条被监控链路的利用率",
+      "observation_method": "使用程序已有的 probe 探测包，并以 probe 回包或监控结果作为观测依据。",
+      "expected_observation": "在持续业务流量驱动后，观测到的链路利用率数值应大于 0。",
+      "traffic_pattern": "先发送至少 20 个包的持续流量，再发送 probe 相关探测包。",
+      "include_negative_case": false,
+      "test_objective": "data_plane_behavior"
+    },
+    "candidate_task": null,
+    "critic_feedback": null,
+    "target_task": {
+      "task_id": "telemetry_monitoring_fallback",
+      "task_description": "验证链路利用率监控功能。选择 h1 到 h3 通信路径上的任意一条链路作为监控对象，使用程序已有的 probe 探测包从 h1 发送到 h3，配合持续流量至少 20 个包来触发可观测的链路利用率变化。只需要一个正向场景，成功标准是 probe 回包或监控结果中能看到该链路的利用率数值大于 0。",
+      "feature_under_test": "traffic_monitoring",
+      "intent_category": "telemetry_monitoring",
+      "observation_focus": "one monitored switch-to-switch link on the h1->h3 path",
+      "observation_method": "probe_response",
+      "expected_observation_semantics": "the returned probe observation should report utilization greater than zero after sustained traffic",
+      "operator_actions": [],
+      "observation_requirements": [
+        {
+          "order": 1,
+          "action_type": "custom",
+          "target_hint": "inspect_probe_response",
+          "timing": "after_scenario",
+          "purpose": "verify the probe response exposes a non-zero utilization value after traffic"
+        }
+      ],
+      "traffic_pattern": null,
+      "role_bindings": {
+        "traffic_src": "h1",
+        "traffic_dst": "h3",
+        "probe_src": "h1",
+        "probe_dst": "h3"
+      },
+      "sequence_contract": [
+        {
+          "scenario": "positive",
+          "kind": "positive",
+          "required": true,
+          "scenario_goal": "drive sustained traffic and then issue a probe-based query for link utilization",
+          "expected_observation": "probe response includes utilization data greater than zero",
+          "steps": [
+            {
+              "tx_role": "traffic_src",
+              "rx_role": "traffic_dst",
+              "protocol_stack": [
+                "Ethernet",
+                "IPv4"
+              ],
+              "repeat_count": 20,
+              "traffic_profile": "sustained_background_traffic",
+              "field_expectations": {
+                "Ethernet.etherType": "0x0800"
+              }
+            },
+            {
+              "tx_role": "probe_src",
+              "rx_role": "probe_dst",
+              "protocol_stack": [
+                "Ethernet",
+                "probe",
+                "probe_fwd"
+              ],
+              "repeat_count": 1,
+              "traffic_profile": "probe_query",
+              "field_expectations": {
+                "Ethernet.etherType": "0x0812",
+                "probe.hop_cnt": 0,
+                "probe_fwd.egress_spec": 1
+              }
+            }
+          ],
+          "field_relations": [],
+          "allow_additional_packets": false
+        }
+      ],
+      "require_positive_and_negative": false,
+      "generation_mode": "packet_only",
+      "forbidden_tables": []
+    },
+    "prompt": "{\n  \"task\": \"Repair or complete a TaskSpec for an Agent1 fallback model.\",\n  \"family\": \"telemetry_monitoring\",\n  \"source_kind\": \"fallback_from_intent\",\n  \"user_intent\": {\n    \"intent_text\": \"验证链路利用率监控功能。选择 h1 到 h3 通信路径上的任意一条链路作为监控对象，使用程序已有的 probe 探测包从 h1 发送到 h3，配合持续流量至少 20 个包来触发可观测的链路利用率变化。只需要一个正向场景，成功标准是 probe 回包或监控结果中能看到该链路的利用率数值大于 0。\",\n    \"feature_under_test\": \"traffic_monitoring\",\n    \"topology_mapping\": \"关注 h1 到 h3 的通信路径，监控对象为该路径上的任意一条链路。\",\n    \"observation_target\": \"h1 到 h3 路径上一条被监控链路的利用率\",\n    \"observation_method\": \"使用程序已有的 probe 探测包，并以 probe 回包或监控结果作为观测依据。\",\n    \"expected_observation\": \"在持续业务流量驱动后，观测到的链路利用率数值应大于 0。\",\n    \"traffic_pattern\": \"先发送至少 20 个包的持续流量，再发送 probe 相关探测包。\",\n    \"include_negative_case\": false,\n    \"test_objective\": \"data_plane_behavior\"\n  },\n  \"candidate_task\": null,\n  \"critic_feedback\": null,\n  \"output_requirement\": \"Return only the corrected TaskSpec JSON.\"\n}",
+    "completion": "{\n  \"task_id\": \"telemetry_monitoring_fallback\",\n  \"task_description\": \"验证链路利用率监控功能。选择 h1 到 h3 通信路径上的任意一条链路作为监控对象，使用程序已有的 probe 探测包从 h1 发送到 h3，配合持续流量至少 20 个包来触发可观测的链路利用率变化。只需要一个正向场景，成功标准是 probe 回包或监控结果中能看到该链路的利用率数值大于 0。\",\n  \"feature_under_test\": \"traffic_monitoring\",\n  \"intent_category\": \"telemetry_monitoring\",\n  \"observation_focus\": \"one monitored switch-to-switch link on the h1->h3 path\",\n  \"observation_method\": \"probe_response\",\n  \"expected_observation_semantics\": \"the returned probe observation should report utilization greater than zero after sustained traffic\",\n  \"operator_actions\": [],\n  \"observation_requirements\": [\n    {\n      \"order\": 1,\n      \"action_type\": \"custom\",\n      \"target_hint\": \"inspect_probe_response\",\n      \"timing\": \"after_scenario\",\n      \"purpose\": \"verify the probe response exposes a non-zero utilization value after traffic\"\n    }\n  ],\n  \"traffic_pattern\": null,\n  \"role_bindings\": {\n    \"traffic_src\": \"h1\",\n    \"traffic_dst\": \"h3\",\n    \"probe_src\": \"h1\",\n    \"probe_dst\": \"h3\"\n  },\n  \"sequence_contract\": [\n    {\n      \"scenario\": \"positive\",\n      \"kind\": \"positive\",\n      \"required\": true,\n      \"scenario_goal\": \"drive sustained traffic and then issue a probe-based query for link utilization\",\n      \"expected_observation\": \"probe response includes utilization data greater than zero\",\n      \"steps\": [\n        {\n          \"tx_role\": \"traffic_src\",\n          \"rx_role\": \"traffic_dst\",\n          \"protocol_stack\": [\n            \"Ethernet\",\n            \"IPv4\"\n          ],\n          \"repeat_count\": 20,\n          \"traffic_profile\": \"sustained_background_traffic\",\n          \"field_expectations\": {\n            \"Ethernet.etherType\": \"0x0800\"\n          }\n        },\n        {\n          \"tx_role\": \"probe_src\",\n          \"rx_role\": \"probe_dst\",\n          \"protocol_stack\": [\n            \"Ethernet\",\n            \"probe\",\n            \"probe_fwd\"\n          ],\n          \"repeat_count\": 1,\n          \"traffic_profile\": \"probe_query\",\n          \"field_expectations\": {\n            \"Ethernet.etherType\": \"0x0812\",\n            \"probe.hop_cnt\": 0,\n            \"probe_fwd.egress_spec\": 1\n          }\n        }\n      ],\n      \"field_relations\": [],\n      \"allow_additional_packets\": false\n    }\n  ],\n  \"require_positive_and_negative\": false,\n  \"generation_mode\": \"packet_only\",\n  \"forbidden_tables\": []\n}",
+    "provenance": {
+      "run_id": "2026-03-10T130250088490Z",
+      "intent_path": "runs/agent_responses/2026-03-10T130250088490Z/agent1_semantic_analyzer/initial_intent_intake_00.json",
+      "target_task_path": "runs/agent_responses/2026-03-10T130250088490Z/deterministic_validator/task_contract_fallback_from_intent_06.json"
+    }
+  },
+  {
+    "sample_id": "threshold_fallback_001",
+    "family": "threshold_state_accumulation",
+    "source_kind": "fallback_from_intent",
+    "user_intent": {
+      "intent_text": "验证 heavy hitter 检测功能。可以在测试前由人工把交换机的阈值临时调低到 10。然后让 h1 向 h2 发送同一条五元组 TCP 流，期望前 10 个包可以转发，第 11 个及之后的包被丢弃；另外再生成一个不同五元组的新 TCP 流，期望它不受前一条流影响。",
+      "feature_under_test": "forwarding_behavior",
+      "topology_mapping": "测试 h1 到 h2 的 TCP 流量行为，并比较同一五元组与不同五元组的差异。",
+      "operator_constraints": "测试前允许人工将阈值临时调低到 10。",
+      "traffic_pattern": "先发送一条重复五元组 TCP 流，再发送一条不同五元组的新 TCP 流。",
+      "include_negative_case": true,
+      "test_objective": "data_plane_behavior"
+    },
+    "candidate_task": null,
+    "critic_feedback": null,
+    "target_task": {
+      "task_id": "heavy_hitter_threshold_fallback",
+      "task_description": "验证 heavy hitter 检测功能。可以在测试前由人工把交换机的阈值临时调低到 10。然后让 h1 向 h2 发送同一条五元组 TCP 流，期望前 10 个包可以转发，第 11 个及之后的包被丢弃；另外再生成一个不同五元组的新 TCP 流，期望它不受前一条流影响。",
+      "feature_under_test": "forwarding_behavior",
+      "intent_category": "stateful_policy",
+      "observation_focus": null,
+      "observation_method": null,
+      "expected_observation_semantics": null,
+      "operator_actions": [
+        {
+          "order": 1,
+          "action_type": "manual_threshold_override",
+          "timing": "before_traffic",
+          "scenario": null,
+          "target": "PACKET_THRESHOLD",
+          "parameters": {
+            "new_value": 10
+          },
+          "expected_effect": "threshold is lowered to 10 before traffic begins"
+        }
+      ],
+      "observation_requirements": [],
+      "traffic_pattern": null,
+      "role_bindings": {
+        "initiator": "h1",
+        "responder": "h2"
+      },
+      "sequence_contract": [
+        {
+          "scenario": "positive_below_threshold",
+          "kind": "positive",
+          "required": true,
+          "scenario_goal": "send a repeated TCP flow below the heavy-hitter threshold and observe forwarding",
+          "expected_observation": null,
+          "steps": [
+            {
+              "tx_role": "initiator",
+              "rx_role": "responder",
+              "protocol_stack": [
+                "Ethernet",
+                "IPv4",
+                "TCP"
+              ],
+              "repeat_count": 10,
+              "traffic_profile": "same_flow_below_threshold",
+              "field_expectations": {
+                "TCP.sport": "fixed_to_congest_flow",
+                "TCP.dport": 80,
+                "TCP.flags": {
+                  "one_of": [
+                    "0x02",
+                    2,
+                    "SYN"
+                  ]
+                }
+              }
+            }
+          ],
+          "field_relations": [],
+          "allow_additional_packets": false
+        },
+        {
+          "scenario": "negative_threshold_exceeded",
+          "kind": "negative",
+          "required": true,
+          "scenario_goal": "continue the same TCP flow beyond the threshold and expect drop behavior",
+          "expected_observation": null,
+          "steps": [
+            {
+              "tx_role": "initiator",
+              "rx_role": "responder",
+              "protocol_stack": [
+                "Ethernet",
+                "IPv4",
+                "TCP"
+              ],
+              "repeat_count": 2,
+              "traffic_profile": "same_flow_above_threshold",
+              "field_expectations": {
+                "TCP.sport": "fixed_to_congest_flow",
+                "TCP.dport": 80,
+                "TCP.flags": {
+                  "one_of": [
+                    "0x02",
+                    2,
+                    "SYN"
+                  ]
+                }
+              }
+            }
+          ],
+          "field_relations": [],
+          "allow_additional_packets": false
+        },
+        {
+          "scenario": "positive_different_flow",
+          "kind": "positive",
+          "required": true,
+          "scenario_goal": "send a different TCP flow and verify it is not affected by the previous heavy hitter",
+          "expected_observation": null,
+          "steps": [
+            {
+              "tx_role": "initiator",
+              "rx_role": "responder",
+              "protocol_stack": [
+                "Ethernet",
+                "IPv4",
+                "TCP"
+              ],
+              "repeat_count": 2,
+              "traffic_profile": "different_five_tuple_new_flow",
+              "field_expectations": {
+                "TCP.sport": "new_flow_different_hash",
+                "TCP.dport": 8080,
+                "TCP.flags": {
+                  "one_of": [
+                    "0x02",
+                    2,
+                    "SYN"
+                  ]
+                }
+              }
+            }
+          ],
+          "field_relations": [],
+          "allow_additional_packets": false
+        }
+      ],
+      "require_positive_and_negative": true,
+      "generation_mode": "packet_and_entities",
+      "forbidden_tables": []
+    },
+    "prompt": "{\n  \"task\": \"Repair or complete a TaskSpec for an Agent1 fallback model.\",\n  \"family\": \"threshold_state_accumulation\",\n  \"source_kind\": \"fallback_from_intent\",\n  \"user_intent\": {\n    \"intent_text\": \"验证 heavy hitter 检测功能。可以在测试前由人工把交换机的阈值临时调低到 10。然后让 h1 向 h2 发送同一条五元组 TCP 流，期望前 10 个包可以转发，第 11 个及之后的包被丢弃；另外再生成一个不同五元组的新 TCP 流，期望它不受前一条流影响。\",\n    \"feature_under_test\": \"forwarding_behavior\",\n    \"topology_mapping\": \"测试 h1 到 h2 的 TCP 流量行为，并比较同一五元组与不同五元组的差异。\",\n    \"operator_constraints\": \"测试前允许人工将阈值临时调低到 10。\",\n    \"traffic_pattern\": \"先发送一条重复五元组 TCP 流，再发送一条不同五元组的新 TCP 流。\",\n    \"include_negative_case\": true,\n    \"test_objective\": \"data_plane_behavior\"\n  },\n  \"candidate_task\": null,\n  \"critic_feedback\": null,\n  \"output_requirement\": \"Return only the corrected TaskSpec JSON.\"\n}",
+    "completion": "{\n  \"task_id\": \"heavy_hitter_threshold_fallback\",\n  \"task_description\": \"验证 heavy hitter 检测功能。可以在测试前由人工把交换机的阈值临时调低到 10。然后让 h1 向 h2 发送同一条五元组 TCP 流，期望前 10 个包可以转发，第 11 个及之后的包被丢弃；另外再生成一个不同五元组的新 TCP 流，期望它不受前一条流影响。\",\n  \"feature_under_test\": \"forwarding_behavior\",\n  \"intent_category\": \"stateful_policy\",\n  \"observation_focus\": null,\n  \"observation_method\": null,\n  \"expected_observation_semantics\": null,\n  \"operator_actions\": [\n    {\n      \"order\": 1,\n      \"action_type\": \"manual_threshold_override\",\n      \"timing\": \"before_traffic\",\n      \"scenario\": null,\n      \"target\": \"PACKET_THRESHOLD\",\n      \"parameters\": {\n        \"new_value\": 10\n      },\n      \"expected_effect\": \"threshold is lowered to 10 before traffic begins\"\n    }\n  ],\n  \"observation_requirements\": [],\n  \"traffic_pattern\": null,\n  \"role_bindings\": {\n    \"initiator\": \"h1\",\n    \"responder\": \"h2\"\n  },\n  \"sequence_contract\": [\n    {\n      \"scenario\": \"positive_below_threshold\",\n      \"kind\": \"positive\",\n      \"required\": true,\n      \"scenario_goal\": \"send a repeated TCP flow below the heavy-hitter threshold and observe forwarding\",\n      \"expected_observation\": null,\n      \"steps\": [\n        {\n          \"tx_role\": \"initiator\",\n          \"rx_role\": \"responder\",\n          \"protocol_stack\": [\n            \"Ethernet\",\n            \"IPv4\",\n            \"TCP\"\n          ],\n          \"repeat_count\": 10,\n          \"traffic_profile\": \"same_flow_below_threshold\",\n          \"field_expectations\": {\n            \"TCP.sport\": \"fixed_to_congest_flow\",\n            \"TCP.dport\": 80,\n            \"TCP.flags\": {\n              \"one_of\": [\n                \"0x02\",\n                2,\n                \"SYN\"\n              ]\n            }\n          }\n        }\n      ],\n      \"field_relations\": [],\n      \"allow_additional_packets\": false\n    },\n    {\n      \"scenario\": \"negative_threshold_exceeded\",\n      \"kind\": \"negative\",\n      \"required\": true,\n      \"scenario_goal\": \"continue the same TCP flow beyond the threshold and expect drop behavior\",\n      \"expected_observation\": null,\n      \"steps\": [\n        {\n          \"tx_role\": \"initiator\",\n          \"rx_role\": \"responder\",\n          \"protocol_stack\": [\n            \"Ethernet\",\n            \"IPv4\",\n            \"TCP\"\n          ],\n          \"repeat_count\": 2,\n          \"traffic_profile\": \"same_flow_above_threshold\",\n          \"field_expectations\": {\n            \"TCP.sport\": \"fixed_to_congest_flow\",\n            \"TCP.dport\": 80,\n            \"TCP.flags\": {\n              \"one_of\": [\n                \"0x02\",\n                2,\n                \"SYN\"\n              ]\n            }\n          }\n        }\n      ],\n      \"field_relations\": [],\n      \"allow_additional_packets\": false\n    },\n    {\n      \"scenario\": \"positive_different_flow\",\n      \"kind\": \"positive\",\n      \"required\": true,\n      \"scenario_goal\": \"send a different TCP flow and verify it is not affected by the previous heavy hitter\",\n      \"expected_observation\": null,\n      \"steps\": [\n        {\n          \"tx_role\": \"initiator\",\n          \"rx_role\": \"responder\",\n          \"protocol_stack\": [\n            \"Ethernet\",\n            \"IPv4\",\n            \"TCP\"\n          ],\n          \"repeat_count\": 2,\n          \"traffic_profile\": \"different_five_tuple_new_flow\",\n          \"field_expectations\": {\n            \"TCP.sport\": \"new_flow_different_hash\",\n            \"TCP.dport\": 8080,\n            \"TCP.flags\": {\n              \"one_of\": [\n                \"0x02\",\n                2,\n                \"SYN\"\n              ]\n            }\n          }\n        }\n      ],\n      \"field_relations\": [],\n      \"allow_additional_packets\": false\n    }\n  ],\n  \"require_positive_and_negative\": true,\n  \"generation_mode\": \"packet_and_entities\",\n  \"forbidden_tables\": []\n}",
+    "provenance": {
+      "run_id": "2026-03-10T130501358996Z",
+      "intent_path": "runs/agent_responses/2026-03-10T130501358996Z/agent1_semantic_analyzer/initial_intent_intake_00.json",
+      "target_task_path": "runs/agent_responses/2026-03-10T130501358996Z/deterministic_validator/task_contract_fallback_from_intent_06.json"
+    }
+  },
+  {
+    "sample_id": "load_distribution_anchor_001",
+    "family": "load_distribution_congestion_feedback",
+    "source_kind": "direct_anchor",
+    "user_intent": {
+      "intent_text": "验证拥塞感知负载均衡功能。让 h1 到 h5 发送多条 TCP 流，期望这些流可以分散到不同路径；如果某条路径拥塞，后续流量应该切换到其他路径。",
+      "test_objective": "data_plane_behavior"
+    },
+    "candidate_task": null,
+    "critic_feedback": null,
+    "target_task": {
+      "task_id": "congestion_aware_load_balance_001",
+      "task_description": "验证拥塞感知负载均衡功能：h1到h5的多条TCP流应分散到不同路径；当某条路径拥塞时，后续流量应切换到其他路径",
+      "feature_under_test": "congestion_aware_load_balancing",
+      "intent_category": "load_distribution",
+      "observation_focus": "load_balance_path_distribution_and_congestion_feedback",
+      "observation_method": "register_state_and_path_telemetry",
+      "expected_observation_semantics": "多条TCP流应分散到4条可用路径(s1-s2-s6, s1-s3-s6, s1-s4-s6, s1-s5-s6)；当队列深度超过阈值50时，feedback_ts寄存器更新且流种子改变导致路径切换",
+      "operator_actions": [
+        {
+          "order": 1,
+          "action_type": "manual_threshold_override",
+          "timing": "before_traffic",
+          "scenario": "congestion_avoidance_path_switch",
+          "target": "QUEUE_DEPTH_THRESHOLD",
+          "parameters": {
+            "new_value": 50,
+            "description": "队列深度阈值，超过此值触发拥塞反馈"
+          },
+          "expected_effect": "当enq_qdepth > 50时，触发feedback机制，更新流种子"
+        }
+      ],
+      "observation_requirements": [
+        {
+          "order": 1,
+          "action_type": "read_register",
+          "target_hint": "MyIngress.loadbalance_seed",
+          "timing": "after_scenario",
+          "purpose": "验证不同流被分配到不同的负载均衡种子，确认流级负载分散"
+        },
+        {
+          "order": 2,
+          "action_type": "read_register",
+          "target_hint": "MyEgress.feedback_ts",
+          "timing": "after_scenario",
+          "purpose": "验证拥塞反馈时间戳被正确记录，确认拥塞感知机制工作"
+        }
+      ],
+      "traffic_pattern": "multi_flow_sustained_burst",
+      "role_bindings": {
+        "traffic_source": "h1",
+        "traffic_destination": "h5",
+        "source_zone": "internal",
+        "destination_zone": "external"
+      },
+      "sequence_contract": [
+        {
+          "scenario": "multi_flow_load_distribution",
+          "kind": "positive",
+          "required": true,
+          "scenario_goal": "验证多条TCP流在正常情况下被分散到不同ECMP路径",
+          "expected_observation": "不同TCP流(不同srcPort)应通过不同路径到达h5，可通过观察各路径的telemetry或register状态验证",
+          "steps": [
+            {
+              "tx_role": "traffic_source",
+              "rx_role": "traffic_destination",
+              "protocol_stack": [
+                "Ethernet",
+                "IPv4",
+                "TCP"
+              ],
+              "repeat_count": 5,
+              "traffic_profile": "bursty",
+              "field_expectations": {
+                "IPv4.src": "10.1.1.2",
+                "IPv4.dst": "10.6.5.2",
+                "TCP.srcPort": "vary_per_packet",
+                "TCP.dstPort": "80"
+              }
+            }
+          ],
+          "field_relations": [],
+          "allow_additional_packets": true
+        },
+        {
+          "scenario": "congestion_avoidance_path_switch",
+          "kind": "positive",
+          "required": true,
+          "scenario_goal": "验证当某条路径拥塞时，后续流量会切换到其他路径",
+          "expected_observation": "拥塞反馈后，后续流的hash种子应被更新，导致路径选择改变；feedback_ts寄存器应记录新的时间戳",
+          "steps": [
+            {
+              "tx_role": "traffic_source",
+              "rx_role": "traffic_destination",
+              "protocol_stack": [
+                "Ethernet",
+                "IPv4",
+                "TCP"
+              ],
+              "repeat_count": 10,
+              "traffic_profile": "sustained_high_rate",
+              "field_expectations": {
+                "IPv4.src": "10.1.1.2",
+                "IPv4.dst": "10.6.5.2",
+                "TCP.srcPort": "fixed_per_flow",
+                "TCP.dstPort": "80"
+              }
+            }
+          ],
+          "field_relations": [],
+          "allow_additional_packets": true
+        }
+      ],
+      "require_positive_and_negative": false,
+      "generation_mode": "packet_and_entities",
+      "forbidden_tables": []
+    },
+    "prompt": "{\n  \"task\": \"Repair or complete a TaskSpec for an Agent1 fallback model.\",\n  \"family\": \"load_distribution_congestion_feedback\",\n  \"source_kind\": \"direct_anchor\",\n  \"user_intent\": {\n    \"intent_text\": \"验证拥塞感知负载均衡功能。让 h1 到 h5 发送多条 TCP 流，期望这些流可以分散到不同路径；如果某条路径拥塞，后续流量应该切换到其他路径。\",\n    \"test_objective\": \"data_plane_behavior\"\n  },\n  \"candidate_task\": null,\n  \"critic_feedback\": null,\n  \"output_requirement\": \"Return only the corrected TaskSpec JSON.\"\n}",
+    "completion": "{\n  \"task_id\": \"congestion_aware_load_balance_001\",\n  \"task_description\": \"验证拥塞感知负载均衡功能：h1到h5的多条TCP流应分散到不同路径；当某条路径拥塞时，后续流量应切换到其他路径\",\n  \"feature_under_test\": \"congestion_aware_load_balancing\",\n  \"intent_category\": \"load_distribution\",\n  \"observation_focus\": \"load_balance_path_distribution_and_congestion_feedback\",\n  \"observation_method\": \"register_state_and_path_telemetry\",\n  \"expected_observation_semantics\": \"多条TCP流应分散到4条可用路径(s1-s2-s6, s1-s3-s6, s1-s4-s6, s1-s5-s6)；当队列深度超过阈值50时，feedback_ts寄存器更新且流种子改变导致路径切换\",\n  \"operator_actions\": [\n    {\n      \"order\": 1,\n      \"action_type\": \"manual_threshold_override\",\n      \"timing\": \"before_traffic\",\n      \"scenario\": \"congestion_avoidance_path_switch\",\n      \"target\": \"QUEUE_DEPTH_THRESHOLD\",\n      \"parameters\": {\n        \"new_value\": 50,\n        \"description\": \"队列深度阈值，超过此值触发拥塞反馈\"\n      },\n      \"expected_effect\": \"当enq_qdepth > 50时，触发feedback机制，更新流种子\"\n    }\n  ],\n  \"observation_requirements\": [\n    {\n      \"order\": 1,\n      \"action_type\": \"read_register\",\n      \"target_hint\": \"MyIngress.loadbalance_seed\",\n      \"timing\": \"after_scenario\",\n      \"purpose\": \"验证不同流被分配到不同的负载均衡种子，确认流级负载分散\"\n    },\n    {\n      \"order\": 2,\n      \"action_type\": \"read_register\",\n      \"target_hint\": \"MyEgress.feedback_ts\",\n      \"timing\": \"after_scenario\",\n      \"purpose\": \"验证拥塞反馈时间戳被正确记录，确认拥塞感知机制工作\"\n    }\n  ],\n  \"traffic_pattern\": \"multi_flow_sustained_burst\",\n  \"role_bindings\": {\n    \"traffic_source\": \"h1\",\n    \"traffic_destination\": \"h5\",\n    \"source_zone\": \"internal\",\n    \"destination_zone\": \"external\"\n  },\n  \"sequence_contract\": [\n    {\n      \"scenario\": \"multi_flow_load_distribution\",\n      \"kind\": \"positive\",\n      \"required\": true,\n      \"scenario_goal\": \"验证多条TCP流在正常情况下被分散到不同ECMP路径\",\n      \"expected_observation\": \"不同TCP流(不同srcPort)应通过不同路径到达h5，可通过观察各路径的telemetry或register状态验证\",\n      \"steps\": [\n        {\n          \"tx_role\": \"traffic_source\",\n          \"rx_role\": \"traffic_destination\",\n          \"protocol_stack\": [\n            \"Ethernet\",\n            \"IPv4\",\n            \"TCP\"\n          ],\n          \"repeat_count\": 5,\n          \"traffic_profile\": \"bursty\",\n          \"field_expectations\": {\n            \"IPv4.src\": \"10.1.1.2\",\n            \"IPv4.dst\": \"10.6.5.2\",\n            \"TCP.srcPort\": \"vary_per_packet\",\n            \"TCP.dstPort\": \"80\"\n          }\n        }\n      ],\n      \"field_relations\": [],\n      \"allow_additional_packets\": true\n    },\n    {\n      \"scenario\": \"congestion_avoidance_path_switch\",\n      \"kind\": \"positive\",\n      \"required\": true,\n      \"scenario_goal\": \"验证当某条路径拥塞时，后续流量会切换到其他路径\",\n      \"expected_observation\": \"拥塞反馈后，后续流的hash种子应被更新，导致路径选择改变；feedback_ts寄存器应记录新的时间戳\",\n      \"steps\": [\n        {\n          \"tx_role\": \"traffic_source\",\n          \"rx_role\": \"traffic_destination\",\n          \"protocol_stack\": [\n            \"Ethernet\",\n            \"IPv4\",\n            \"TCP\"\n          ],\n          \"repeat_count\": 10,\n          \"traffic_profile\": \"sustained_high_rate\",\n          \"field_expectations\": {\n            \"IPv4.src\": \"10.1.1.2\",\n            \"IPv4.dst\": \"10.6.5.2\",\n            \"TCP.srcPort\": \"fixed_per_flow\",\n            \"TCP.dstPort\": \"80\"\n          }\n        }\n      ],\n      \"field_relations\": [],\n      \"allow_additional_packets\": true\n    }\n  ],\n  \"require_positive_and_negative\": false,\n  \"generation_mode\": \"packet_and_entities\",\n  \"forbidden_tables\": []\n}",
+    "provenance": {
+      "run_id": "2026-03-07T053442Z",
+      "agent1_path": "runs/agent_responses/2026-03-07T053442Z/agent1_semantic_analyzer/agent1_output_01.json"
+    }
+  }
+]

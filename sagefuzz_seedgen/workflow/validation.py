@@ -115,7 +115,9 @@ def _resolve_symbolic_expectation(
     abstract_tokens = {
         "fixed",
         "fixed_single_port",
+        "fixed_to_congest_flow",
         "different_from_positive",
+        "new_flow_different_hash",
         "incrementing",
         "decrementing",
         "same_flow",

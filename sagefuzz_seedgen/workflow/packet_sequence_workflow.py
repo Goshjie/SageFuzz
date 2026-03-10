@@ -48,7 +48,7 @@ SchemaT = TypeVar("SchemaT", bound=BaseModel)
 
 
 def _utc_ts() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%M%SZ")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%M%S%fZ")
 
 
 def _load_json_file(path: Path) -> Dict[str, Any]:
@@ -118,6 +118,120 @@ def _progress(message: str) -> None:
     print(f"[进度] {message}", flush=True)
 
 
+def _extract_usage_payload(value: Any) -> Optional[Dict[str, Any]]:
+    if value is None:
+        return None
+    payload: Dict[str, Any] = {}
+
+    metrics = getattr(value, "metrics", None)
+    if metrics is not None:
+        if hasattr(metrics, "to_dict"):
+            try:
+                payload.update(metrics.to_dict())
+            except Exception:
+                pass
+        elif hasattr(metrics, "model_dump"):
+            try:
+                payload.update(metrics.model_dump())
+            except Exception:
+                pass
+        elif isinstance(metrics, dict):
+            payload.update(metrics)
+
+    response_usage = getattr(value, "response_usage", None)
+    if response_usage is not None:
+        if hasattr(response_usage, "to_dict"):
+            try:
+                payload.update(response_usage.to_dict())
+            except Exception:
+                pass
+        elif hasattr(response_usage, "model_dump"):
+            try:
+                payload.update(response_usage.model_dump())
+            except Exception:
+                pass
+        elif isinstance(response_usage, dict):
+            payload.update(response_usage)
+
+    for key in (
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "time_to_first_token",
+        "reasoning_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
+    ):
+        raw = getattr(value, key, None)
+        if raw is not None:
+            payload[key] = raw
+
+    cleaned = {k: v for k, v in payload.items() if v is not None}
+    return cleaned or None
+
+
+def _with_usage(extra: Optional[Dict[str, Any]], usage: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    merged = dict(extra or {})
+    if usage:
+        merged["usage"] = usage
+    return merged or None
+
+
+def _record_usage_event(
+    usage_events: List[Dict[str, Any]],
+    *,
+    agent_role: str,
+    step: str,
+    round_id: int,
+    usage: Optional[Dict[str, Any]],
+) -> None:
+    if not usage:
+        return
+    usage_events.append(
+        {
+            "agent_role": agent_role,
+            "step": step,
+            "round": round_id,
+            **usage,
+        }
+    )
+
+
+def _summarize_usage_events(usage_events: List[Dict[str, Any]]) -> Dict[str, Any]:
+    summary = {
+        "totals": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "reasoning_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+        },
+        "per_agent": {},
+        "events": usage_events,
+    }
+    for event in usage_events:
+        agent_role = str(event.get("agent_role") or "unknown")
+        agent_bucket = summary["per_agent"].setdefault(
+            agent_role,
+            {
+                "calls": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "reasoning_tokens": 0,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+            },
+        )
+        agent_bucket["calls"] += 1
+        for key in ("input_tokens", "output_tokens", "total_tokens", "reasoning_tokens", "cache_read_tokens", "cache_write_tokens"):
+            value = int(event.get(key) or 0)
+            agent_bucket[key] += value
+            summary["totals"][key] += value
+    return summary
+
+
 def _should_use_agent_run_compat(agent: Any) -> bool:
     model = getattr(agent, "model", None)
     model_id = str(getattr(model, "id", "") or "").lower()
@@ -168,7 +282,7 @@ def _agent_run_compat(
     *,
     output_schema: Optional[Type[BaseModel]] = None,
     session_state: Optional[Dict[str, Any]] = None,
-) -> Any:
+) -> Tuple[Any, Optional[Dict[str, Any]]]:
     """Compatibility path for providers where Agent.run() is unstable.
 
     This path reuses Agno's internal message construction and tool wiring, but
@@ -235,7 +349,7 @@ def _agent_run_compat(
         response_format=response_format,
         run_response=run_response,
     )
-    return model_response.content
+    return model_response.content, _extract_usage_payload(model_response)
 
 
 def _agent_run_content(
@@ -244,7 +358,7 @@ def _agent_run_content(
     *,
     output_schema: Optional[Type[BaseModel]] = None,
     session_state: Optional[Dict[str, Any]] = None,
-) -> Any:
+) -> Tuple[Any, Optional[Dict[str, Any]]]:
     """Run an Agno agent, with a compatibility fallback for unstable providers."""
     if _requires_streaming_provider(agent):
         stream_result = agent.run(
@@ -256,7 +370,7 @@ def _agent_run_content(
         last_item: Any = None
         for item in stream_result:
             last_item = item
-        return getattr(last_item, "content", None)
+        return getattr(last_item, "content", None), _extract_usage_payload(last_item)
     try:
         if _has_unstable_schema_mode(agent) and output_schema is not None:
             return _agent_run_compat(
@@ -265,11 +379,13 @@ def _agent_run_content(
                 output_schema=output_schema,
                 session_state=session_state,
             )
-        content = agent.run(
+        run_result = agent.run(
             prompt,
             output_schema=output_schema,
             session_state=session_state,
-        ).content
+        )
+        content = run_result.content
+        usage = _extract_usage_payload(run_result)
         if _should_use_agent_run_compat(agent) and isinstance(content, str):
             normalized = content.strip().lower()
             if normalized in {"connection error.", "connection error", "api connection error"}:
@@ -279,7 +395,7 @@ def _agent_run_content(
                     output_schema=output_schema,
                     session_state=session_state,
                 )
-        return content
+        return content, usage
     except Exception:
         if not _should_use_agent_run_compat(agent):
             raise
@@ -684,10 +800,6 @@ def _resolve_packet_value(
         if attr == 'mac':
             return _host_mac(ctx, host_id) or expected
 
-    if token in {'fixed', 'fixed_single_port', 'fixed_port', 'fixed_value_1', 'fixed_value_2', 'constant', 'constant_port'} or token.startswith('fixed'):
-        if field_name.endswith('dport') or field_name.endswith('dstPort'):
-            return 80
-        return 10000 + step_index
     if token == 'fixed_to_congest_flow':
         if field_name.endswith('dport') or field_name.endswith('dstPort'):
             return 80
@@ -696,6 +808,10 @@ def _resolve_packet_value(
         if field_name.endswith('dport') or field_name.endswith('dstPort'):
             return 8080
         return 22000 + packet_id
+    if token in {'fixed', 'fixed_single_port', 'fixed_port', 'fixed_value_1', 'fixed_value_2', 'constant', 'constant_port'} or token.startswith('fixed'):
+        if field_name.endswith('dport') or field_name.endswith('dstPort'):
+            return 80
+        return 10000 + step_index
     if token.startswith('different_'):
         return 20000 + step_index
     if token.startswith('vary') or token.startswith('flow_'):
@@ -703,6 +819,91 @@ def _resolve_packet_value(
     if token in {'incrementing', 'decrementing', 'any', 'wildcard', 'next_hop_mac', 'gateway_mac'}:
         return token
     return expected
+
+
+def _materialize_expected_packet_value(
+    *,
+    field_name: str,
+    expected: Any,
+    ctx: Any,
+    task: TaskSpec,
+    tx_host: Optional[str],
+    rx_host: Optional[str],
+    packet_id: int,
+    step_index: int,
+) -> Any:
+    if isinstance(expected, dict):
+        if "equals" in expected:
+            return _materialize_expected_packet_value(
+                field_name=field_name,
+                expected=expected["equals"],
+                ctx=ctx,
+                task=task,
+                tx_host=tx_host,
+                rx_host=rx_host,
+                packet_id=packet_id,
+                step_index=step_index,
+            )
+        if "eq" in expected:
+            return _materialize_expected_packet_value(
+                field_name=field_name,
+                expected=expected["eq"],
+                ctx=ctx,
+                task=task,
+                tx_host=tx_host,
+                rx_host=rx_host,
+                packet_id=packet_id,
+                step_index=step_index,
+            )
+        if "one_of" in expected and isinstance(expected["one_of"], list) and expected["one_of"]:
+            return _materialize_expected_packet_value(
+                field_name=field_name,
+                expected=expected["one_of"][0],
+                ctx=ctx,
+                task=task,
+                tx_host=tx_host,
+                rx_host=rx_host,
+                packet_id=packet_id,
+                step_index=step_index,
+            )
+        if "contains" in expected:
+            needle = expected["contains"]
+            if isinstance(needle, list) and all(isinstance(item, str) for item in needle):
+                if field_name.endswith("flags"):
+                    return "|".join(needle)
+                return "".join(needle)
+            if isinstance(needle, str):
+                return needle
+        if expected.get("non_empty") is True:
+            if field_name.endswith("sport") or field_name.endswith("srcPort"):
+                return 30000 + packet_id
+            if field_name.endswith("dport") or field_name.endswith("dstPort"):
+                return 80
+            if field_name == "Ethernet.etherType":
+                return "0x0800"
+            if field_name == "IPv4.proto":
+                return 6
+            return None
+        return None
+
+    resolved = _resolve_packet_value(
+        field_name=field_name,
+        expected=expected,
+        ctx=ctx,
+        task=task,
+        tx_host=tx_host,
+        rx_host=rx_host,
+        packet_id=packet_id,
+        step_index=step_index,
+    )
+    if isinstance(expected, str) and (expected.startswith('vary') or expected.startswith('flow_') or expected.startswith('different_')):
+        if field_name.endswith('sport') or field_name.endswith('srcPort'):
+            return 40000 + packet_id
+        if field_name.endswith('dport') or field_name.endswith('dstPort'):
+            return 50000 + step_index
+    if isinstance(resolved, str) and resolved in {'incrementing', 'decrementing', 'any', 'wildcard', 'next_hop_mac', 'gateway_mac'}:
+        return None
+    return resolved
 
 
 def _repair_packet_sequence_candidate(*, ctx: Any, task: TaskSpec, candidate: PacketSequenceCandidate) -> PacketSequenceCandidate:
@@ -757,7 +958,7 @@ def _repair_packet_sequence_candidate(*, ctx: Any, task: TaskSpec, candidate: Pa
                 for field_name, expected in getattr(step, 'field_expectations', {}).items():
                     if not isinstance(field_name, str) or '.' not in field_name:
                         continue
-                    resolved = _resolve_packet_value(
+                    resolved = _materialize_expected_packet_value(
                         field_name=field_name,
                         expected=expected,
                         ctx=ctx,
@@ -767,12 +968,7 @@ def _repair_packet_sequence_candidate(*, ctx: Any, task: TaskSpec, candidate: Pa
                         packet_id=int(payload.get("packet_id") or len(repaired_packets) + 1),
                         step_index=step_index + repeat_offset,
                     )
-                    if isinstance(expected, str) and (expected.startswith('vary') or expected.startswith('flow_') or expected.startswith('different_')):
-                        if field_name.endswith('sport') or field_name.endswith('srcPort'):
-                            resolved = 40000 + len(repaired_packets) + 1
-                        elif field_name.endswith('dport') or field_name.endswith('dstPort'):
-                            resolved = 50000 + step_index
-                    if resolved not in {'incrementing', 'decrementing', 'any', 'wildcard', 'next_hop_mac', 'gateway_mac'}:
+                    if resolved is not None:
                         fields[field_name] = resolved
                 payload["fields"] = fields
                 repaired_packets.append(PacketSpec.model_validate(payload))
@@ -821,7 +1017,7 @@ def _fallback_packet_sequence_from_task(*, ctx: Any, task: TaskSpec) -> Optional
                 for field_name, expected in getattr(step, 'field_expectations', {}).items():
                     if not isinstance(field_name, str) or '.' not in field_name:
                         continue
-                    resolved = _resolve_packet_value(
+                    resolved = _materialize_expected_packet_value(
                         field_name=field_name,
                         expected=expected,
                         ctx=ctx,
@@ -831,7 +1027,7 @@ def _fallback_packet_sequence_from_task(*, ctx: Any, task: TaskSpec) -> Optional
                         packet_id=packet_id,
                         step_index=step_index,
                     )
-                    if resolved not in {'incrementing', 'decrementing', 'any', 'wildcard', 'next_hop_mac', 'gateway_mac'}:
+                    if resolved is not None:
                         fields[field_name] = resolved
                 packets.append(
                     PacketSpec(
@@ -1290,6 +1486,7 @@ def _apply_telemetry_monitoring_fallback(*, ctx: Any, intent_payload: Dict[str, 
     if task.intent_category not in {"telemetry_monitoring", "state_observation"}:
         return task
     payload = task.model_dump()
+    payload["generation_mode"] = "packet_only"
     chosen_link = _first_switch_link(ctx) or "selected_path_link"
     if not payload.get("observation_focus"):
         payload["observation_focus"] = f"monitor utilization on {chosen_link}"
@@ -1404,14 +1601,24 @@ def _apply_load_distribution_fallback(*, intent_payload: Dict[str, Any], task: T
             action.setdefault("timing", "between_scenarios")
 
     obs = list(payload.get("observation_requirements") or [])
+    if not obs:
+        obs = [
+            {
+                "order": 1,
+                "action_type": "read_register",
+                "target_hint": "MyEgress.feedback_ts",
+                "timing": "after_scenario",
+                "purpose": "verify congestion-feedback register timestamps update after reroute-driving traffic",
+            }
+        ]
     if isinstance(obs, list) and len(obs) == 1:
         obs.append(
             {
-                "order": 2,
-                "action_type": "read_register",
-                "target_hint": "path_selection_state",
+                "order": len(obs) + 1,
+                "action_type": "read_counter",
+                "target_hint": "ecmp_path_selection_state",
                 "timing": "after_scenario",
-                "purpose": "verify path-selection state changes after congestion-triggered reroute",
+                "purpose": "verify new flows are hashed onto alternate ECMP paths after congestion feedback",
             }
         )
     payload["observation_requirements"] = obs
@@ -1428,11 +1635,22 @@ def _apply_load_distribution_fallback(*, intent_payload: Dict[str, Any], task: T
             for step in steps:
                 if isinstance(step, dict):
                     step["repeat_count"] = max(int(step.get("repeat_count", 1)), 10)
+                    fe = dict(step.get("field_expectations") or {}) if isinstance(step.get("field_expectations"), dict) else {}
+                    fe.setdefault("TCP.sport", "flow_hash_baseline")
+                    fe.setdefault("TCP.dport", 80)
+                    step["field_expectations"] = fe
+                    step.setdefault("traffic_profile", "baseline_multi_flow_distribution")
+            contract["scenario_goal"] = contract.get("scenario_goal") or "send multiple distinct TCP flows and observe that traffic spreads across available ECMP paths"
+            contract["expected_observation"] = contract.get("expected_observation") or "multiple distinct flows should be distributed across different forwarding paths before any congestion feedback is applied"
         if "congestion" in scenario:
             for idx, step in enumerate(steps, 1):
                 if not isinstance(step, dict):
                     continue
                 step["repeat_count"] = max(int(step.get("repeat_count", 1)), 5)
+                fe = dict(step.get("field_expectations") or {}) if isinstance(step.get("field_expectations"), dict) else {}
+                fe.setdefault("TCP.sport", "new_flow_different_hash")
+                fe.setdefault("TCP.dport", 80)
+                step["field_expectations"] = fe
                 if idx == 1:
                     step["traffic_profile"] = "high_rate_congestion_build"
                 else:
@@ -1472,14 +1690,268 @@ def _resolve_generation_mode(*, intent_payload: Dict[str, Any], task: TaskSpec) 
     if selected == "control_plane_rules":
         return "packet_only"
     if selected == "data_plane_behavior":
+        if task.intent_category in {"telemetry_monitoring", "state_observation"}:
+            return "packet_only"
         return "packet_and_entities"
     # Fallback to task-provided value if user selection is unavailable.
+    if task.intent_category in {"telemetry_monitoring", "state_observation"}:
+        return "packet_only"
     return task.generation_mode
+
+
+def _extract_host_mentions(*, text: str, ctx: Any) -> List[str]:
+    mentioned = re.findall(r"\bh\d+\b", text.lower())
+    out: List[str] = []
+    seen: set[str] = set()
+    for host_id in mentioned:
+        if host_id in ctx.host_info and host_id not in seen:
+            out.append(host_id)
+            seen.add(host_id)
+    return out
+
+
+def _default_hosts_for_intent(*, ctx: Any, intent_payload: Dict[str, Any], expected: int = 2) -> List[str]:
+    combined = " ".join(
+        [
+            str(intent_payload.get("intent_text") or ""),
+            str(intent_payload.get("topology_mapping") or ""),
+            str(intent_payload.get("topology_zone_mapping") or ""),
+        ]
+    )
+    selected = _extract_host_mentions(text=combined, ctx=ctx)
+    if len(selected) >= expected:
+        return selected[:expected]
+    for host_id in sorted(ctx.host_info.keys()):
+        if host_id not in selected:
+            selected.append(host_id)
+        if len(selected) >= expected:
+            break
+    return selected[:expected]
+
+
+def _synthesize_task_from_intent(*, ctx: Any, intent_payload: Dict[str, Any]) -> Optional[TaskSpec]:
+    combined = " ".join(
+        [
+            str(intent_payload.get("intent_text") or ""),
+            str(intent_payload.get("feature_under_test") or ""),
+            str(intent_payload.get("traffic_pattern") or ""),
+            str(intent_payload.get("operator_constraints") or ""),
+            str(intent_payload.get("expected_observation") or ""),
+        ]
+    ).lower()
+    if not combined.strip():
+        return None
+
+    hosts = _default_hosts_for_intent(ctx=ctx, intent_payload=intent_payload, expected=2)
+    if len(hosts) < 2:
+        return None
+
+    if any(token in combined for token in ("probe", "监控", "利用率", "telemetry", "monitor")):
+        traffic_src, traffic_dst = hosts[0], hosts[1]
+        has_probe = "probe" in ctx.headers_by_name
+        steps: List[Dict[str, Any]] = [
+            {
+                "tx_role": "traffic_src",
+                "rx_role": "traffic_dst",
+                "protocol_stack": ["Ethernet", "IPv4"],
+                "repeat_count": 20,
+                "traffic_profile": "sustained_background_traffic",
+                "field_expectations": {
+                    "Ethernet.etherType": "0x0800",
+                },
+            }
+        ]
+        if has_probe:
+            steps.append(
+                {
+                    "tx_role": "probe_src",
+                    "rx_role": "probe_dst",
+                    "protocol_stack": ["Ethernet", "probe", "probe_fwd"],
+                    "repeat_count": 1,
+                    "traffic_profile": "probe_query",
+                    "field_expectations": {
+                        "Ethernet.etherType": "0x0812",
+                        "probe.hop_cnt": 0,
+                        "probe_fwd.egress_spec": 1,
+                    },
+                }
+            )
+        else:
+            steps.append(
+                {
+                    "tx_role": "probe_src",
+                    "rx_role": "probe_dst",
+                    "protocol_stack": ["Ethernet", "IPv4", "UDP"],
+                    "repeat_count": 1,
+                    "traffic_profile": "probe_query",
+                    "field_expectations": {
+                        "Ethernet.etherType": "0x0800",
+                        "UDP.dport": 4000,
+                    },
+                }
+            )
+
+        return TaskSpec.model_validate(
+            {
+                "task_id": "telemetry_monitoring_fallback",
+                "task_description": str(intent_payload.get("intent_text") or "monitor link utilization with probe traffic"),
+                "feature_under_test": str(intent_payload.get("feature_under_test") or "traffic_monitoring"),
+                "intent_category": "telemetry_monitoring",
+                "observation_focus": f"one monitored switch-to-switch link on the {traffic_src}->{traffic_dst} path",
+                "observation_method": "probe_response",
+                "expected_observation_semantics": "the returned probe observation should report utilization greater than zero after sustained traffic",
+                "observation_requirements": [
+                    {
+                        "order": 1,
+                        "action_type": "custom",
+                        "target_hint": "inspect_probe_response",
+                        "timing": "after_scenario",
+                        "purpose": "verify the probe response exposes a non-zero utilization value after traffic",
+                    }
+                ],
+                "role_bindings": {
+                    "traffic_src": traffic_src,
+                    "traffic_dst": traffic_dst,
+                    "probe_src": traffic_src,
+                    "probe_dst": traffic_dst,
+                },
+                "require_positive_and_negative": False,
+                "generation_mode": "packet_only",
+                "sequence_contract": [
+                    {
+                        "scenario": "positive",
+                        "kind": "positive",
+                        "required": True,
+                        "scenario_goal": "drive sustained traffic and then issue a probe-based query for link utilization",
+                        "expected_observation": "probe response includes utilization data greater than zero",
+                        "allow_additional_packets": False,
+                        "steps": steps,
+                    }
+                ],
+                "forbidden_tables": [],
+            }
+        )
+
+    if any(token in combined for token in ("heavy hitter", "heavy_hitter", "threshold", "阈值")):
+        src_host, dst_host = hosts[0], hosts[1]
+        return TaskSpec.model_validate(
+            {
+                "task_id": "heavy_hitter_threshold_fallback",
+                "task_description": str(intent_payload.get("intent_text") or "validate heavy hitter threshold behavior"),
+                "feature_under_test": str(intent_payload.get("feature_under_test") or "forwarding_behavior"),
+                "intent_category": "stateful_policy",
+                "role_bindings": {
+                    "initiator": src_host,
+                    "responder": dst_host,
+                },
+                "operator_actions": [
+                    {
+                        "order": 1,
+                        "action_type": "manual_threshold_override",
+                        "timing": "before_traffic",
+                        "scenario": None,
+                        "target": "PACKET_THRESHOLD",
+                        "parameters": {"new_value": 10},
+                        "expected_effect": "threshold is lowered to 10 before traffic begins",
+                    }
+                ],
+                "require_positive_and_negative": True,
+                "generation_mode": "packet_and_entities",
+                "sequence_contract": [
+                    {
+                        "scenario": "positive_below_threshold",
+                        "kind": "positive",
+                        "required": True,
+                        "scenario_goal": "send a repeated TCP flow below the heavy-hitter threshold and observe forwarding",
+                        "allow_additional_packets": False,
+                        "steps": [
+                            {
+                                "tx_role": "initiator",
+                                "rx_role": "responder",
+                                "protocol_stack": ["Ethernet", "IPv4", "TCP"],
+                                "repeat_count": 10,
+                                "traffic_profile": "same_flow_below_threshold",
+                                "field_expectations": {
+                                    "TCP.sport": "fixed_to_congest_flow",
+                                    "TCP.dport": 80,
+                                    "TCP.flags": {"one_of": ["0x02", 2, "SYN"]},
+                                },
+                            }
+                        ],
+                    },
+                    {
+                        "scenario": "negative_threshold_exceeded",
+                        "kind": "negative",
+                        "required": True,
+                        "scenario_goal": "continue the same TCP flow beyond the threshold and expect drop behavior",
+                        "allow_additional_packets": False,
+                        "steps": [
+                            {
+                                "tx_role": "initiator",
+                                "rx_role": "responder",
+                                "protocol_stack": ["Ethernet", "IPv4", "TCP"],
+                                "repeat_count": 2,
+                                "traffic_profile": "same_flow_above_threshold",
+                                "field_expectations": {
+                                    "TCP.sport": "fixed_to_congest_flow",
+                                    "TCP.dport": 80,
+                                    "TCP.flags": {"one_of": ["0x02", 2, "SYN"]},
+                                },
+                            }
+                        ],
+                    },
+                    {
+                        "scenario": "positive_different_flow",
+                        "kind": "positive",
+                        "required": True,
+                        "scenario_goal": "send a different TCP flow and verify it is not affected by the previous heavy hitter",
+                        "allow_additional_packets": False,
+                        "steps": [
+                            {
+                                "tx_role": "initiator",
+                                "rx_role": "responder",
+                                "protocol_stack": ["Ethernet", "IPv4", "TCP"],
+                                "repeat_count": 2,
+                                "traffic_profile": "different_five_tuple_new_flow",
+                                "field_expectations": {
+                                    "TCP.sport": "new_flow_different_hash",
+                                    "TCP.dport": 8080,
+                                    "TCP.flags": {"one_of": ["0x02", 2, "SYN"]},
+                                },
+                            }
+                        ],
+                    },
+                ],
+                "forbidden_tables": [],
+            }
+        )
+
+    return None
+
+
+def _normalize_task_with_intent_fallback(*, ctx: Any, intent_payload: Dict[str, Any], task: TaskSpec) -> TaskSpec:
+    synthesized = _synthesize_task_from_intent(ctx=ctx, intent_payload=intent_payload)
+    if synthesized is None:
+        return task
+
+    combined = " ".join(
+        [
+            str(intent_payload.get("intent_text") or ""),
+            str(intent_payload.get("feature_under_test") or ""),
+            str(task.task_description or ""),
+        ]
+    ).lower()
+
+    if any(token in combined for token in ("heavy hitter", "heavy_hitter", "threshold", "阈值")):
+        return synthesized
+
+    return task
 
 
 def run_packet_sequence_generation(cfg: RunConfig) -> Path:
     run_id = _utc_ts()
     recorder = AgentRecorder(base_dir=Path("runs"), run_id=run_id)
+    usage_events: List[Dict[str, Any]] = []
 
     ctx = initialize_program_context(
         bmv2_json_path=cfg.program.bmv2_json,
@@ -1574,13 +2046,15 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         )
         a1_raw: Any = None
         a1_raw_retry: Any = None
+        a1_usage: Optional[Dict[str, Any]] = None
+        a1_retry_usage: Optional[Dict[str, Any]] = None
         a1_primary_error: Optional[str] = None
         a1_retry_error: Optional[str] = None
         _progress(
             f"Agent1 正在执行语义分析（第{_round}/{max_intent_rounds}轮，schema模式，最长等待约{int(cfg.model.timeout_seconds) if cfg.model else 0}s）。"
         )
         try:
-            a1_raw = _agent_run_content(
+            a1_raw, a1_usage = _agent_run_content(
                 agent1,
                 a1_in_str,
                 output_schema=Agent1Output,
@@ -1598,7 +2072,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             )
             try:
                 _progress("Agent1 原始输出重试调用已发出，正在等待模型返回。")
-                a1_raw_retry = _agent_run_content(
+                a1_raw_retry, a1_retry_usage = _agent_run_content(
                     agent1,
                     a1_in_str,
                     session_state=session_state,
@@ -1617,13 +2091,15 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             round_id=_round,
             model_input=a1_in,
             model_output=_to_recordable(a1_out),
-            extra={
+            extra=_with_usage({
                 "raw_output": _to_recordable(a1_raw),
                 "raw_output_retry": _to_recordable(a1_raw_retry),
                 "primary_error": a1_primary_error,
                 "retry_error": a1_retry_error,
-            },
+            }, a1_usage or a1_retry_usage),
         )
+        _record_usage_event(usage_events, agent_role="agent1_semantic_analyzer", step="agent1_output", round_id=_round, usage=a1_usage)
+        _record_usage_event(usage_events, agent_role="agent1_semantic_analyzer", step="agent1_output_retry", round_id=_round, usage=a1_retry_usage)
 
         if a1_out.kind == "task" and a1_out.task is not None:
             a1_out.task = _apply_operator_action_fallback(intent_payload=intent_payload, task=a1_out.task)
@@ -1664,7 +2140,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 _progress(
                 f"Agent3 正在审查TaskSpec语义（第{_round}/{max_intent_rounds}轮，最长等待约{int(cfg.model.timeout_seconds) if cfg.model else 0}s）。"
             )
-                task_review_raw = _agent_run_content(
+                task_review_raw, task_review_usage = _agent_run_content(
                     agent3,
                     task_review_in_str,
                     output_schema=CriticResult,
@@ -1689,8 +2165,9 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 round_id=_round,
                 model_input=task_review_in,
                 model_output=_to_recordable(task_review) if task_review is not None else {"error": "schema_parse_failed"},
-                extra={"raw_output": _to_recordable(task_review_raw)},
+                extra=_with_usage({"raw_output": _to_recordable(task_review_raw)}, task_review_usage),
             )
+            _record_usage_event(usage_events, agent_role="agent3_constraint_critic", step="task_contract_review", round_id=_round, usage=task_review_usage)
             if task_review is not None and task_review.status == "FAIL":
                 print(f"\n[WARN] Agent3 认为 TaskSpec 语义不完整：{task_review.feedback}")
                 _progress("Agent3 审查未通过，已将反馈回传Agent1修订。")
@@ -1749,7 +2226,8 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
 
     if task is None and last_task_candidate is not None:
         # Fallback: avoid hard stop when semantic reviewer remains unstable across rounds.
-        task = last_task_candidate
+        synthesized_task = _synthesize_task_from_intent(ctx=ctx, intent_payload=intent_payload)
+        task = synthesized_task or last_task_candidate
         fallback_feedback = last_task_review_feedback or "TaskSpec review did not converge within max rounds."
         print(
             "\n[WARN] Agent1/Agent3 task review未在轮次内收敛，"
@@ -1764,13 +2242,26 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         )
 
     if task is None:
-        raise RuntimeError("Unable to obtain sufficient user intent to generate a task.")
+        synthesized_task = _synthesize_task_from_intent(ctx=ctx, intent_payload=intent_payload)
+        if synthesized_task is not None:
+            task = synthesized_task
+            recorder.record(
+                agent_role="deterministic_validator",
+                step="task_contract_fallback_from_intent",
+                round_id=max_intent_rounds + 1,
+                model_input={"intent_payload": intent_payload},
+                model_output={"status": "PASS_WITH_FALLBACK", "task": task.model_dump()},
+            )
+        else:
+            raise RuntimeError("Unable to obtain sufficient user intent to generate a task.")
 
     try:
         user_intent = UserIntent.model_validate(intent_payload) if intent_payload else None
     except Exception:
         user_intent = None
     user_intent_payload = user_intent.model_dump() if user_intent else (intent_payload or None)
+
+    task = _normalize_task_with_intent_fallback(ctx=ctx, intent_payload=intent_payload, task=task)
 
     # Ensure role bindings are present if the model omitted them. Prefer neutral role names
     # so non-policy tasks are not forced into initiator/responder framing.
@@ -1821,7 +2312,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             _progress(
                 f"Agent2 正在生成packet_sequence（第{attempt}/{cfg.max_retries}轮，最长等待约{int(cfg.model.timeout_seconds) if cfg.model else 0}s）。"
             )
-            cand_raw = _agent_run_content(
+            cand_raw, cand_usage = _agent_run_content(
                 agent2,
                 gen_in_str,
                 output_schema=PacketSequenceCandidate,
@@ -1850,8 +2341,9 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 round_id=attempt,
                 model_input=gen_in,
                 model_output={"error": "schema_parse_failed"},
-                extra={"raw_output": _to_recordable(cand_raw)},
+                extra=_with_usage({"raw_output": _to_recordable(cand_raw)}, cand_usage),
             )
+            _record_usage_event(usage_events, agent_role="agent2_sequence_constructor", step="packet_sequence_candidate", round_id=attempt, usage=cand_usage)
             continue
         recorder.record(
             agent_role="agent2_sequence_constructor",
@@ -1859,7 +2351,9 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             round_id=attempt,
             model_input=gen_in,
             model_output=candidate.model_dump(),
+            extra=_with_usage(None, cand_usage),
         )
+        _record_usage_event(usage_events, agent_role="agent2_sequence_constructor", step="packet_sequence_candidate", round_id=attempt, usage=cand_usage)
 
         critic_in = {
             "task": _compact_task_payload(task),
@@ -1871,7 +2365,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             _progress(
                 f"Agent3 正在审查packet_sequence（第{attempt}/{cfg.max_retries}轮，最长等待约{int(cfg.model.timeout_seconds) if cfg.model else 0}s）。"
             )
-            critic_raw = _agent_run_content(
+            critic_raw, critic_usage = _agent_run_content(
                 agent3,
                 critic_in_str,
                 output_schema=CriticResult,
@@ -1898,8 +2392,9 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 round_id=attempt,
                 model_input=critic_in,
                 model_output={"error": "schema_parse_failed"},
-                extra={"raw_output": _to_recordable(critic_raw)},
+                extra=_with_usage({"raw_output": _to_recordable(critic_raw)}, critic_usage),
             )
+            _record_usage_event(usage_events, agent_role="agent3_constraint_critic", step="critic_result", round_id=attempt, usage=critic_usage)
             continue
         recorder.record(
             agent_role="agent3_constraint_critic",
@@ -1907,7 +2402,9 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             round_id=attempt,
             model_input=critic_in,
             model_output=llm_critic.model_dump(),
+            extra=_with_usage(None, critic_usage),
         )
+        _record_usage_event(usage_events, agent_role="agent3_constraint_critic", step="critic_result", round_id=attempt, usage=critic_usage)
 
         attempt_result = AttemptResult(task_id=task.task_id, packet_sequence=candidate.packet_sequence, critic=llm_critic)
 
@@ -2014,7 +2511,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                     _progress(
                         f"Agent4 正在生成场景'{scenario}'的控制面实体（第{attempt}/{cfg.max_retries}轮）。"
                     )
-                    entity_raw = _agent_run_content(
+                    entity_raw, entity_usage = _agent_run_content(
                         agent4,
                         entity_gen_in_str,
                         output_schema=RuleSetCandidate,
@@ -2041,8 +2538,9 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                         round_id=attempt,
                         model_input=entity_gen_in,
                         model_output={"error": "schema_parse_failed"},
-                        extra={"raw_output": _to_recordable(entity_raw)},
+                        extra=_with_usage({"raw_output": _to_recordable(entity_raw)}, entity_usage),
                     )
+                    _record_usage_event(usage_events, agent_role="agent4_entity_generator", step=f"entity_candidate_{scenario_slug}", round_id=attempt, usage=entity_usage)
                     continue
                 recorder.record(
                     agent_role="agent4_entity_generator",
@@ -2050,7 +2548,9 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                     round_id=attempt,
                     model_input=entity_gen_in,
                     model_output=entity_candidate.model_dump(),
+                    extra=_with_usage(None, entity_usage),
                 )
+                _record_usage_event(usage_events, agent_role="agent4_entity_generator", step=f"entity_candidate_{scenario_slug}", round_id=attempt, usage=entity_usage)
                 normalized_cp_sequence = _normalize_control_plane_sequence(entity_candidate, operator_actions=operator_cp_sequence)
                 normalized_execution_sequence = _normalize_execution_sequence(
                     candidate=entity_candidate,
@@ -2078,7 +2578,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                     _progress(
                         f"Agent5 正在审查场景'{scenario}'控制面实体（第{attempt}/{cfg.max_retries}轮）。"
                     )
-                    entity_critic_raw = _agent_run_content(
+                    entity_critic_raw, entity_critic_usage = _agent_run_content(
                         agent5,
                         entity_critic_in_str,
                         output_schema=CriticResult,
@@ -2105,8 +2605,9 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                         round_id=attempt,
                         model_input=entity_critic_in,
                         model_output={"error": "schema_parse_failed"},
-                        extra={"raw_output": _to_recordable(entity_critic_raw)},
+                        extra=_with_usage({"raw_output": _to_recordable(entity_critic_raw)}, entity_critic_usage),
                     )
+                    _record_usage_event(usage_events, agent_role="agent5_entity_critic", step=f"entity_critic_result_{scenario_slug}", round_id=attempt, usage=entity_critic_usage)
                     continue
                 recorder.record(
                     agent_role="agent5_entity_critic",
@@ -2114,7 +2615,9 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                     round_id=attempt,
                     model_input=entity_critic_in,
                     model_output=llm_entity_critic.model_dump(),
+                    extra=_with_usage(None, entity_critic_usage),
                 )
+                _record_usage_event(usage_events, agent_role="agent5_entity_critic", step=f"entity_critic_result_{scenario_slug}", round_id=attempt, usage=entity_critic_usage)
 
                 det_entity_critic = validate_control_plane_entities(
                     ctx=ctx,
@@ -2296,7 +2799,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 _progress(
                     f"Agent6 正在生成场景'{scenario}'的Oracle预测（第{attempt}/{cfg.max_retries}轮，最长等待约{int(cfg.model.timeout_seconds) if cfg.model else 0}s）。"
                 )
-                oracle_raw = _agent_run_content(
+                oracle_raw, oracle_usage = _agent_run_content(
                     agent6,
                     oracle_in_str,
                     output_schema=OraclePredictionCandidate,
@@ -2323,8 +2826,9 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                     round_id=attempt,
                     model_input=oracle_in,
                     model_output={"error": "schema_parse_failed"},
-                    extra={"raw_output": _to_recordable(oracle_raw)},
+                    extra=_with_usage({"raw_output": _to_recordable(oracle_raw)}, oracle_usage),
                 )
+                _record_usage_event(usage_events, agent_role="agent6_oracle_predictor", step=f"oracle_prediction_{scenario_slug}", round_id=attempt, usage=oracle_usage)
                 continue
 
             validation_feedback = _validate_oracle_prediction_candidate(
@@ -2360,7 +2864,9 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 round_id=attempt,
                 model_input=oracle_in,
                 model_output=oracle_candidate.model_dump(),
+                extra=_with_usage(None, oracle_usage),
             )
+            _record_usage_event(usage_events, agent_role="agent6_oracle_predictor", step=f"oracle_prediction_{scenario_slug}", round_id=attempt, usage=oracle_usage)
             oracle_prediction = oracle_candidate
             _progress(f"场景'{scenario}'的Oracle预测已生成。")
             break
@@ -2447,6 +2953,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
 
     generation_elapsed_seconds = max(0.0, time.perf_counter() - generation_start_mono)
     generation_end_ts = _utc_ts()
+    token_usage_summary = _summarize_usage_events(usage_events)
 
     case_records: List[Dict[str, Any]] = []
     for scenario in scenario_order:
@@ -2503,12 +3010,16 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             "oracle_prediction_fallback_case_count": sum(
                 1 for c in case_records if c.get("oracle_prediction_status") == "FALLBACK"
             ),
+            "input_tokens": int(token_usage_summary["totals"].get("input_tokens") or 0),
+            "output_tokens": int(token_usage_summary["totals"].get("output_tokens") or 0),
+            "total_tokens": int(token_usage_summary["totals"].get("total_tokens") or 0),
         },
         "timing": {
             "intent_to_testcase_seconds": generation_elapsed_seconds,
             "generation_start_utc": generation_start_ts,
             "generation_end_utc": generation_end_ts,
         },
+        "token_usage": token_usage_summary,
         "artifacts": {
             "cases_dir": str(cases_dir),
             "cases": case_records,

@@ -1,0 +1,198 @@
+{
+  "created_on": "2026-03-10",
+  "purpose": "Candidate external test-set programs for the fallback-dependent program families in chapter 4 follow-up experiments.",
+  "selection_scope": {
+    "included_families": [
+      "telemetry_monitoring",
+      "threshold_state_accumulation",
+      "load_distribution_congestion_feedback"
+    ],
+    "excluded_families": [
+      "stateful_policy_firewall",
+      "path_failover_fast_reroute"
+    ],
+    "reason": "The included families are the ones that currently rely most on fallback or still exhibit incomplete semantic grounding."
+  },
+  "task_recognition_tags": {
+    "telemetry_monitoring": {
+      "family_aliases": [
+        "telemetry",
+        "monitoring",
+        "probe_observation",
+        "state_observation"
+      ],
+      "intent_keywords_zh": [
+        "监控",
+        "观测",
+        "探测",
+        "利用率",
+        "probe",
+        "统计"
+      ],
+      "expected_task_traits": [
+        "probe/query packet path",
+        "register/counter observation",
+        "observation-driven testcase",
+        "often packet_only fallback"
+      ]
+    },
+    "threshold_state_accumulation": {
+      "family_aliases": [
+        "heavy_hitter",
+        "threshold_enforcement",
+        "per_flow_state",
+        "stateful_threshold"
+      ],
+      "intent_keywords_zh": [
+        "阈值",
+        "计数",
+        "累计",
+        "超阈值",
+        "重流",
+        "heavy hitter"
+      ],
+      "expected_task_traits": [
+        "same-flow repetition",
+        "threshold crossing",
+        "drop after accumulation",
+        "different-flow isolation"
+      ]
+    },
+    "load_distribution_congestion_feedback": {
+      "family_aliases": [
+        "load_distribution",
+        "ecmp",
+        "load_balancing",
+        "congestion_feedback",
+        "path_spreading"
+      ],
+      "intent_keywords_zh": [
+        "负载均衡",
+        "分流",
+        "拥塞",
+        "反馈",
+        "路径切换",
+        "ECMP"
+      ],
+      "expected_task_traits": [
+        "multiple distinct flows",
+        "path spreading before disturbance",
+        "feedback or congestion signal after disturbance",
+        "operator action grounding is often required"
+      ]
+    }
+  },
+  "candidates": [
+    {
+      "family": "telemetry_monitoring",
+      "program_label": "MRI",
+      "priority": "high",
+      "source_repo": "p4lang/tutorials",
+      "program_path_hint": "exercises/mri",
+      "status": "not_yet_imported",
+      "why_candidate": "Classic telemetry-style program with per-hop metadata export; close to Link Monitor but not identical.",
+      "suggested_use": "Primary external test program for telemetry fallback generalization.",
+      "matching_signals": [
+        "probe-like or metadata-carrying packets",
+        "path or hop observation",
+        "packet format contains observation payload"
+      ],
+      "expected_evaluation_focus": [
+        "Can the fallback model recognize telemetry semantics?",
+        "Can it produce observation requirements without hand-written templates?"
+      ]
+    },
+    {
+      "family": "telemetry_monitoring",
+      "program_label": "P4-INT",
+      "priority": "high",
+      "source_repo": "laofan13/P4-INT",
+      "program_path_hint": "repository root; INT collector + sender/receiver utilities",
+      "status": "not_yet_imported",
+      "why_candidate": "Stronger telemetry/INT style program that should test whether fallback knowledge transfers beyond the local Link Monitor implementation.",
+      "suggested_use": "Secondary telemetry external test program with richer observation semantics.",
+      "matching_signals": [
+        "INT / telemetry collector terminology",
+        "hop-level or path-level observation fields",
+        "monitoring result extraction via packet payload"
+      ],
+      "expected_evaluation_focus": [
+        "Generalization from simple probe monitoring to richer INT-like observation"
+      ]
+    },
+    {
+      "family": "load_distribution_congestion_feedback",
+      "program_label": "Tutorial Load Balancing",
+      "priority": "high",
+      "source_repo": "p4lang/tutorials",
+      "program_path_hint": "exercises/load_balance",
+      "status": "not_yet_imported",
+      "why_candidate": "Low-friction ECMP/load-distribution program to test whether the fallback model learned multi-flow dispersion patterns instead of memorizing a single CALB implementation.",
+      "suggested_use": "Baseline external test program for load-distribution family.",
+      "matching_signals": [
+        "ECMP",
+        "multiple next hops",
+        "hash-based path selection",
+        "multi-flow spreading"
+      ],
+      "expected_evaluation_focus": [
+        "Can the fallback model preserve multi-flow semantics without congestion-feedback complexity?"
+      ]
+    },
+    {
+      "family": "load_distribution_congestion_feedback",
+      "program_label": "QCMP",
+      "priority": "medium",
+      "source_repo": "In-Network-Machine-Learning/QCMP",
+      "program_path_hint": "repository root; dynamic load-balancing research prototype",
+      "status": "not_yet_imported",
+      "why_candidate": "Closer to congestion-aware load balancing than the tutorial ECMP example; more suitable for testing feedback-oriented fallback knowledge.",
+      "suggested_use": "Advanced external test program once the simpler tutorial load-balancer path is stable.",
+      "matching_signals": [
+        "feedback or queue-aware path selection",
+        "dynamic load-balancing behavior",
+        "post-disturbance path adaptation"
+      ],
+      "expected_evaluation_focus": [
+        "Can the fallback model express congestion-triggered reroute or path-switch behavior?"
+      ]
+    },
+    {
+      "family": "threshold_state_accumulation",
+      "program_label": "PRECISION-bmv2 or related heavy-hitter variant",
+      "priority": "medium",
+      "source_repo": "Princeton-Cabernet/p4-projects",
+      "program_path_hint": "heavy-hitter related project listing; exact subproject to be confirmed",
+      "status": "needs_repo_confirmation",
+      "why_candidate": "Closest publicly referenced family to Heavy Hitter Detector in terms of state accumulation and threshold-driven discrimination.",
+      "suggested_use": "Preferred external threshold/state-accumulation test program if repository structure is confirmed.",
+      "matching_signals": [
+        "heavy hitter",
+        "per-flow threshold",
+        "stateful counting",
+        "drop or classification after accumulation"
+      ],
+      "expected_evaluation_focus": [
+        "Can the fallback model recover threshold-crossing scenario structure on an unseen implementation?"
+      ]
+    },
+    {
+      "family": "threshold_state_accumulation",
+      "program_label": "P4Pir",
+      "priority": "low",
+      "source_repo": "In-Network-Machine-Learning/P4Pir",
+      "program_path_hint": "repository root",
+      "status": "not_yet_imported",
+      "why_candidate": "Broader stateful detection family rather than pure heavy-hitter thresholding; usable only if a cleaner heavy-hitter candidate is unavailable.",
+      "suggested_use": "Fallback backup candidate for threshold/state-accumulation family.",
+      "matching_signals": [
+        "stateful flow detection",
+        "register or counter driven decision",
+        "flow-level state change"
+      ],
+      "expected_evaluation_focus": [
+        "Whether the fallback model transfers generic state-accumulation structure beyond heavy-hitter naming"
+      ]
+    }
+  ]
+}

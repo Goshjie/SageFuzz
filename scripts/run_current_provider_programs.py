@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 import time
+import argparse
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -129,6 +130,12 @@ def _utc_ts() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%M%SZ")
 
 
+def _slugify_model_id(model_id: Any) -> str:
+    raw = str(model_id or "unknown-model").strip().lower()
+    raw = raw.replace("/", "_")
+    return "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in raw).strip("._-") or "unknown-model"
+
+
 def _latest_index_files() -> set[str]:
     return {str(p) for p in (ROOT / "runs").glob("*_packet_sequence_index.json")}
 
@@ -154,18 +161,37 @@ def _load_model_section() -> Dict[str, Any]:
     return model
 
 
+def _load_model_section_from(path: Path) -> Dict[str, Any]:
+    cfg = load_config_file(path)
+    model = cfg.get("model")
+    if not isinstance(model, dict):
+        raise RuntimeError(f"{path} is missing a valid model section.")
+    return model
+
+
 def main() -> int:
-    model = _load_model_section()
+    parser = argparse.ArgumentParser(description="Run full-program experiments with the configured provider/model.")
+    parser.add_argument(
+        "--config-file",
+        type=Path,
+        default=ROOT / "seedgen_config.yaml",
+        help="Path to config file containing a model section. Defaults to seedgen_config.yaml.",
+    )
+    parser.add_argument("programs", nargs="*", help="Optional subset of program ids to run.")
+    args = parser.parse_args()
+
+    model = _load_model_section_from(args.config_file)
     timeout_seconds = int(model.get("timeout_seconds", 120))
     max_retries = int(model.get("max_retries", 3))
     run_timeout = int((timeout_seconds + 30) * max_retries * 8)
 
-    out_dir = ROOT / "runs" / f"current_provider_programs_{_utc_ts()}"
+    model_slug = _slugify_model_id(model.get("model_id"))
+    out_dir = ROOT / "runs" / f"current_provider_programs__{model_slug}__{_utc_ts()}"
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "configs").mkdir(parents=True, exist_ok=True)
     (out_dir / "logs").mkdir(parents=True, exist_ok=True)
 
-    selected = set(sys.argv[1:]) if len(sys.argv) > 1 else None
+    selected = set(args.programs) if args.programs else None
 
     results: List[Dict[str, Any]] = []
     for program in PROGRAMS:
@@ -246,6 +272,7 @@ def main() -> int:
             "model_id": model.get("model_id"),
             "base_url": model.get("base_url"),
         },
+        "config_file": str(args.config_file),
         "results": results,
     }
     (out_dir / "results.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

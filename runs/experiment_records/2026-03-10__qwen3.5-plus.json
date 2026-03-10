@@ -1,0 +1,77 @@
+{
+  "experiment_date": "2026-03-10",
+  "model_id": "qwen3.5-plus",
+  "provider": {
+    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  },
+  "config_file": "runs/experiment_records/configs/2026-03-10__qwen3.5-plus.yaml",
+  "batch_run_dir": "runs/current_provider_programs__qwen3.5-plus__2026-03-10T125313Z",
+  "notes": [
+    "This record corresponds to the sequential full-program experiment using qwen3.5-plus.",
+    "Token accounting was enabled for this entire batch.",
+    "fast_reroute and load_balancer failed before testcase generation because the workflow could not obtain a stable task contract from Agent1/Agent3 under this model.",
+    "Successful programs still include fallback usage in some stages; intent-alignment judgments below distinguish confirmed vs fallback-backed cases."
+  ],
+  "programs": [
+    {
+      "program": "firewall",
+      "index_path": "runs/2026-03-10T125314360221Z_packet_sequence_index.json",
+      "final_status": "PASS",
+      "generation_mode": "packet_and_entities",
+      "token_usage_recorded": true,
+      "input_tokens": 786811,
+      "output_tokens": 20270,
+      "total_tokens": 807081,
+      "intent_alignment_judgement": "confirmed",
+      "intent_alignment_note": "The generated packet sequence covers the intended positive three-way handshake and the external-initiated negative SYN case."
+    },
+    {
+      "program": "link_monitor",
+      "index_path": "runs/2026-03-10T130250088490Z_packet_sequence_index.json",
+      "final_status": "PASS",
+      "generation_mode": "packet_only",
+      "token_usage_recorded": true,
+      "input_tokens": 74747,
+      "output_tokens": 2917,
+      "total_tokens": 77664,
+      "intent_alignment_judgement": "usable_with_fallback",
+      "intent_alignment_note": "The testcase is generated through the telemetry fallback path and skips entity generation; usable for continued experiments but not pure model-native success."
+    },
+    {
+      "program": "heavy_hitter",
+      "index_path": "runs/2026-03-10T130501358996Z_packet_sequence_index.json",
+      "final_status": "PASS",
+      "generation_mode": "packet_and_entities",
+      "token_usage_recorded": true,
+      "input_tokens": 117941,
+      "output_tokens": 14802,
+      "total_tokens": 132743,
+      "intent_alignment_judgement": "confirmed",
+      "intent_alignment_note": "The fallback heavy-hitter contract produced below-threshold forwarding, threshold-exceeded drop, and different-flow isolation."
+    },
+    {
+      "program": "fast_reroute",
+      "index_path": null,
+      "final_status": "FAIL",
+      "generation_mode": null,
+      "token_usage_recorded": false,
+      "input_tokens": null,
+      "output_tokens": null,
+      "total_tokens": null,
+      "intent_alignment_judgement": "not_generated",
+      "intent_alignment_note": "The workflow failed before testcase generation with 'Unable to obtain sufficient user intent to generate a task.'"
+    },
+    {
+      "program": "load_balancer",
+      "index_path": null,
+      "final_status": "FAIL",
+      "generation_mode": null,
+      "token_usage_recorded": false,
+      "input_tokens": null,
+      "output_tokens": null,
+      "total_tokens": null,
+      "intent_alignment_judgement": "not_generated",
+      "intent_alignment_note": "The workflow failed before testcase generation with 'Unable to obtain sufficient user intent to generate a task.'"
+    }
+  ]
+}
