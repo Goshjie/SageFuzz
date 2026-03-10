@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
-from sagefuzz_seedgen.config import AgentModelOverrides, AgnoMemoryConfig, ModelConfig, ProgramPaths, RunConfig
+from sagefuzz_seedgen.config import AgentModelOverrides, AgnoMemoryConfig, FallbackConfig, ModelConfig, ProgramPaths, RunConfig
 from sagefuzz_seedgen.config_file import find_default_config_file, load_config_file
 
 def _path(p: str) -> Path:
@@ -87,6 +87,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--base-url", type=str, default=None)
     ap.add_argument("--model-timeout", type=float, default=None, help="Model API timeout in seconds.")
     ap.add_argument("--model-retries", type=int, default=None, help="Model API retry count.")
+    ap.add_argument(
+        "--disable-fallbacks",
+        action="store_true",
+        help="Disable automatic fallback generation paths and keep raw failure/critic behavior.",
+    )
 
     return ap
 
@@ -168,6 +173,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     memory_section = cfg_data.get("memory", {})
     if not isinstance(memory_section, dict):
         memory_section = {}
+    fallback_section = cfg_data.get("fallbacks", {})
+    if not isinstance(fallback_section, dict):
+        fallback_section = {}
 
     program = ProgramPaths(
         bmv2_json=_path(paths_section.get("bmv2_json")) if paths_section.get("bmv2_json") else args.bmv2_json,
@@ -192,12 +200,16 @@ def main(argv: Optional[list[str]] = None) -> int:
             _as_bool(memory_section.get("enable_session_summaries"), False),
         ),
     )
+    fallbacks = FallbackConfig(
+        enabled=False if args.disable_fallbacks else _as_bool(fallback_section.get("enabled"), True),
+    )
 
     cfg = RunConfig(
         program=program,
         model=model,
         agent_models=agent_models,
         memory=memory,
+        fallbacks=fallbacks,
         user_intent=intent_section or None,
         max_retries=int(run_section.get("max_retries")) if run_section.get("max_retries") else args.max_retries,
         out_path=args.out,

@@ -1952,6 +1952,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
     run_id = _utc_ts()
     recorder = AgentRecorder(base_dir=Path("runs"), run_id=run_id)
     usage_events: List[Dict[str, Any]] = []
+    fallbacks_enabled = bool(getattr(cfg, "fallbacks", None) and cfg.fallbacks.enabled)
 
     ctx = initialize_program_context(
         bmv2_json_path=cfg.program.bmv2_json,
@@ -2006,6 +2007,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             "agno_memory_user_id": memory_user_id if cfg.memory.enabled else None,
             "agno_memory_bucket": memory_bucket,
             "agno_memory_db_path": str(cfg.memory.db_path) if cfg.memory.enabled else None,
+            "fallbacks_enabled": fallbacks_enabled,
         }
     )
 
@@ -2102,10 +2104,11 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         _record_usage_event(usage_events, agent_role="agent1_semantic_analyzer", step="agent1_output_retry", round_id=_round, usage=a1_retry_usage)
 
         if a1_out.kind == "task" and a1_out.task is not None:
-            a1_out.task = _apply_operator_action_fallback(intent_payload=intent_payload, task=a1_out.task)
-            a1_out.task = _apply_observation_fallback(intent_payload=intent_payload, task=a1_out.task)
-            a1_out.task = _apply_load_distribution_fallback(intent_payload=intent_payload, task=a1_out.task)
-            a1_out.task = _apply_telemetry_monitoring_fallback(ctx=ctx, intent_payload=intent_payload, task=a1_out.task)
+            if fallbacks_enabled:
+                a1_out.task = _apply_operator_action_fallback(intent_payload=intent_payload, task=a1_out.task)
+                a1_out.task = _apply_observation_fallback(intent_payload=intent_payload, task=a1_out.task)
+                a1_out.task = _apply_load_distribution_fallback(intent_payload=intent_payload, task=a1_out.task)
+                a1_out.task = _apply_telemetry_monitoring_fallback(ctx=ctx, intent_payload=intent_payload, task=a1_out.task)
             last_task_candidate = a1_out.task
             _progress("Agent1 已生成TaskSpec，转交Agent3进行语义完整性审查。")
             # Agent-based semantic completeness check for TaskSpec before Agent2 generation.
@@ -2224,7 +2227,7 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         # Merge answers into existing intent (if any)
         intent_payload.update(answers)
 
-    if task is None and last_task_candidate is not None:
+    if task is None and last_task_candidate is not None and fallbacks_enabled:
         # Fallback: avoid hard stop when semantic reviewer remains unstable across rounds.
         synthesized_task = _synthesize_task_from_intent(ctx=ctx, intent_payload=intent_payload)
         task = synthesized_task or last_task_candidate
@@ -2242,6 +2245,15 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         )
 
     if task is None:
+        if not fallbacks_enabled:
+            recorder.record(
+                agent_role="deterministic_validator",
+                step="task_contract_fallback_disabled",
+                round_id=max_intent_rounds + 1,
+                model_input={"intent_payload": intent_payload},
+                model_output={"status": "FAIL", "feedback": "Fallbacks disabled; raw task generation did not converge."},
+            )
+            raise RuntimeError("Unable to obtain sufficient user intent to generate a task.")
         synthesized_task = _synthesize_task_from_intent(ctx=ctx, intent_payload=intent_payload)
         if synthesized_task is not None:
             task = synthesized_task
@@ -2261,7 +2273,8 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         user_intent = None
     user_intent_payload = user_intent.model_dump() if user_intent else (intent_payload or None)
 
-    task = _normalize_task_with_intent_fallback(ctx=ctx, intent_payload=intent_payload, task=task)
+    if fallbacks_enabled:
+        task = _normalize_task_with_intent_fallback(ctx=ctx, intent_payload=intent_payload, task=task)
 
     # Ensure role bindings are present if the model omitted them. Prefer neutral role names
     # so non-policy tasks are not forced into initiator/responder framing.
@@ -2434,6 +2447,17 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
         _progress(f"packet_sequence 未通过，准备重试。原因：{last_feedback}")
 
     if last_attempt is None:
+        if not fallbacks_enabled:
+            recorder.record(
+                agent_role="deterministic_validator",
+                step="packet_sequence_fallback_disabled",
+                round_id=cfg.max_retries + 1,
+                model_input={"task": task.model_dump()},
+                model_output={"status": "FAIL", "feedback": f"No packet_sequence attempt succeeded after {cfg.max_retries} retries."},
+            )
+            raise RuntimeError(
+                f"No packet_sequence attempt succeeded after {cfg.max_retries} retries. Last feedback: {last_feedback}"
+            )
         fallback_candidate = _fallback_packet_sequence_from_task(ctx=ctx, task=task)
         if fallback_candidate is None:
             raise RuntimeError(
@@ -2697,6 +2721,22 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
                 or not getattr(last_entities, "entities", [])
             )
             if fallback_needed:
+                if not fallbacks_enabled:
+                    recorder.record(
+                        agent_role="deterministic_validator",
+                        step=f"entity_fallback_disabled_{scenario_slug}",
+                        round_id=cfg.max_retries + 1,
+                        model_input={
+                            "scenario": scenario,
+                            "packet_sequence": [p.model_dump() for p in packets_for_scenario],
+                            "last_feedback": last_entity_feedback,
+                        },
+                        model_output={"status": "FAIL", "feedback": "Fallbacks disabled; entity fallback not applied."},
+                    )
+                    raise RuntimeError(
+                        f"No entity generation attempt succeeded for scenario '{scenario}' after {cfg.max_retries} retries. "
+                        f"Last feedback: {last_entity_feedback}"
+                    )
                 fallback_candidate = _fallback_minimal_entities(
                     ctx=ctx,
                     task=task,
@@ -2872,6 +2912,18 @@ def run_packet_sequence_generation(cfg: RunConfig) -> Path:
             break
 
         if oracle_prediction is None:
+            if not fallbacks_enabled:
+                recorder.record(
+                    agent_role="agent6_oracle_predictor",
+                    step=f"oracle_prediction_fallback_disabled_{scenario_slug}",
+                    round_id=max(1, oracle_attempt_count),
+                    model_input={"scenario": scenario, "reason": last_oracle_feedback},
+                    model_output={"status": "FAIL", "feedback": "Fallbacks disabled; oracle fallback not applied."},
+                )
+                raise RuntimeError(
+                    f"No oracle prediction succeeded for scenario '{scenario}' after {cfg.max_retries} retries. "
+                    f"Last feedback: {last_oracle_feedback}"
+                )
             fallback_reason = last_oracle_feedback or "Agent6 did not return a valid oracle prediction."
             oracle_prediction = _fallback_oracle_prediction(
                 task_id=task.task_id,

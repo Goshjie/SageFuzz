@@ -72,11 +72,17 @@ class AgnoMemoryConfig:
 
 
 @dataclass(frozen=True)
+class FallbackConfig:
+    enabled: bool = True
+
+
+@dataclass(frozen=True)
 class RunConfig:
     program: ProgramPaths
     model: Optional[ModelConfig]
     agent_models: AgentModelOverrides = field(default_factory=AgentModelOverrides)
     memory: AgnoMemoryConfig = field(default_factory=AgnoMemoryConfig)
+    fallbacks: FallbackConfig = field(default_factory=FallbackConfig)
     # Raw user intent dictionary; parsed/validated by workflow.
     user_intent: Optional[dict] = None
     max_retries: int = 4
