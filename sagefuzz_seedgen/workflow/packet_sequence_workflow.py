@@ -130,6 +130,12 @@ def _has_unstable_schema_mode(agent: Any) -> bool:
     return ("deepseek" in model_id) or ("kimi" in model_id)
 
 
+def _requires_streaming_provider(agent: Any) -> bool:
+    model = getattr(agent, "model", None)
+    base_url = str(getattr(model, "base_url", "") or "").lower()
+    return "codex-for.me" in base_url
+
+
 def _strip_deepseek_schema_noise(value: Any) -> Any:
     if isinstance(value, dict):
         cleaned: Dict[str, Any] = {}
@@ -240,6 +246,17 @@ def _agent_run_content(
     session_state: Optional[Dict[str, Any]] = None,
 ) -> Any:
     """Run an Agno agent, with a compatibility fallback for unstable providers."""
+    if _requires_streaming_provider(agent):
+        stream_result = agent.run(
+            prompt,
+            stream=True,
+            yield_run_output=True,
+            session_state=session_state,
+        )
+        last_item: Any = None
+        for item in stream_result:
+            last_item = item
+        return getattr(last_item, "content", None)
     try:
         if _has_unstable_schema_mode(agent) and output_schema is not None:
             return _agent_run_compat(
