@@ -1,6 +1,6 @@
 # 3.3.3 程序上下文建模与证据查询
 
-3.2.2 节通过链路监测场景表明，正确生成测试用例所需的约束分散在编译产物、控制流图、拓扑和有状态对象定义等多个异构数据源中。本节介绍 P4-BISG 中程序上下文层的设计，包括上下文的形式化定义、索引构建方法和工具化证据查询机制。
+3.2.2 节通过链路监测场景表明，生成模型在面对 P4LTL 规范时无法自主判断该从哪个数据源获取所需的程序约束。本节介绍 P4-BISG 中程序上下文层的设计，通过统一索引和工具化查询机制，使生成模块能够按需定位到具体数据源并获取精确证据。
 
 ### （1）程序上下文的形式化定义
 
@@ -48,9 +48,9 @@ $$T_{\text{topo}} = \langle \mathcal{H}, \mathcal{SW}, \mathcal{L}, \text{zone} 
 
 2: $\delta_{\text{parser}} \leftarrow \text{ParseParserDAG}(F_{\text{json}})$
 
-3: $\mathcal{T} \leftarrow \text{ExtractTableSignatures}(F_{\text{json}})$ $\quad\triangleright$ 表名→匹配键→动作映射
+3: $\mathcal{T} \leftarrow \text{ExtractTableSignatures}(F_{\text{json}})$ $\qquad$ // 表名→匹配键→动作映射
 
-4: $w \leftarrow \text{BuildFieldWidthIndex}(F_{\text{json}})$ $\quad\triangleright$ 字段名→位宽映射
+4: $w \leftarrow \text{BuildFieldWidthIndex}(F_{\text{json}})$ $\qquad$ // 字段名→位宽映射
 
 5: $\mathcal{S}_{\text{obj}} \leftarrow \text{ExtractStatefulObjects}(F_{\text{json}})$
 
@@ -94,9 +94,9 @@ P4-BISG 的核心设计原则之一是生成模块不直接读取原始编译产
 
 $$\text{Query}: \mathcal{Q}_{\text{type}} \times C \times \text{params} \rightarrow \text{evidence}$$
 
-其中 $\mathcal{Q}_{\text{type}}$ 为查询类型集合。表 3-2 列出了系统支持的主要查询类型及其与上下文分量的映射关系。
+其中 $\mathcal{Q}_{\text{type}}$ 为查询类型集合。表 3-5 列出了系统支持的主要查询类型及其与上下文分量的映射关系。
 
-**表 3-2 工具化查询类型与证据来源**
+**表 3-5 工具化查询类型与证据来源**
 
 | 查询类型 | 输入参数 | 证据来源 | 返回内容 |
 |---------|---------|---------|---------|
@@ -113,4 +113,4 @@ $$\text{Query}: \mathcal{Q}_{\text{type}} \times C \times \text{params} \rightar
 
 > 图注：左侧为各生成模块，中间为 ProgramContext 统一查询调度器（支持 PARSER_PATH、TABLE_SIGNATURE、FIELD_WIDTH 等查询类型），右侧为四类数据源（BMv2 Index / CFG Graph / Topology Index / Source Index）。实线表示查询请求，虚线表示证据返回。
 
-这种工具化查询设计与 3.2.2 节中分析的挑战直接对应。以链路监测程序为例，序列构造模块在生成 probe 报文时：首先通过 PARSER\_PATH 查询获取 `probe_header` 的解析路径与先决条件；然后通过 FIELD\_WIDTH 查询确定各探针字段的位宽；接着通过 STATEFUL\_OBJECT 查询获取 `byte_cnt_reg` 的索引方式；最后通过 HOST\_ROLE 查询确定 probe 应从哪个主机注入。整个过程中，生成模块无需处理完整的编译产物文本，只需发起四次精确查询即可获取所有必要约束。
+这种工具化查询设计与 3.2.2 节中分析的技术难点直接对应。以链路监测程序为例，序列构造模块在生成 probe 报文时：首先通过 PARSER\_PATH 查询获取 `probe_header` 的解析路径与先决条件；然后通过 FIELD\_WIDTH 查询确定各探针字段的位宽；接着通过 STATEFUL\_OBJECT 查询获取 `byte_cnt_reg` 的索引方式；最后通过 HOST\_ROLE 查询确定 probe 应从哪个主机注入。整个过程中，生成模块无需处理完整的编译产物文本，只需发起四次精确查询即可获取所有必要约束。

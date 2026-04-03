@@ -58,19 +58,19 @@ $$V_{\text{exec}}(\Xi) = \left[\bigwedge_{i=1}^{|\Xi|-1} \xi_i.\text{seq} < \xi_
 
 3: **for each** $(\sigma, \mathcal{S}, \Phi) \in \Lambda$ **do**
 
-4: $\quad \Pi_\sigma \leftarrow \text{ConstructPacketSequence}(\sigma, \mathcal{S}, R, C)$ $\quad\triangleright$ 通过工具查询获取约束
+4: $\quad \Pi_\sigma \leftarrow \text{ConstructPacketSequence}(\sigma, \mathcal{S}, R, C)$ $\qquad$ // 通过工具查询获取约束
 
 5: $\quad$ **for** $i = 1$ **to** $k$ **do**
 
-6: $\quad\quad$ **if** $V_{\text{packet}}(\Pi_\sigma, \sigma, C) \wedge V_{\text{contract}}(\Pi_\sigma, \mathcal{S}, \Phi)$ **then break** $\quad\triangleright$ 校验通过
+6: $\quad\quad$ **if** $V_{\text{packet}}(\Pi_\sigma, \sigma, C) \wedge V_{\text{contract}}(\Pi_\sigma, \mathcal{S}, \Phi)$ **then break** $\qquad$ // 校验通过
 
-7: $\quad\quad \Pi_\sigma \leftarrow \text{RepairSequence}(\Pi_\sigma, \text{violations}, C)$ $\quad\triangleright$ 阶段内修复
+7: $\quad\quad \Pi_\sigma \leftarrow \text{RepairSequence}(\Pi_\sigma, \text{violations}, C)$ $\qquad$ // 阶段内修复
 
 8: $\quad$ **end for**
 
 9: $\quad$ **if** $\neg V_{\text{packet}}(\Pi_\sigma, \sigma, C)$ **then**
 
-10: $\quad\quad \Pi_\sigma \leftarrow \text{FallbackMinimal}(\sigma, C)$ $\quad\triangleright$ 最小可执行回退
+10: $\quad\quad \Pi_\sigma \leftarrow \text{FallbackMinimal}(\sigma, C)$ $\qquad$ // 最小可执行回退
 
 11: $\quad$ **end if**
 

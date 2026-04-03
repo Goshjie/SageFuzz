@@ -46,9 +46,9 @@ $$\forall o \in O_{\text{obs}}: \quad o.\text{target} \in P_{\text{bmv2}}.\mathc
 
 P4LTL 规范的分解过程需要将声明式的时序逻辑转化为操作性的测试结构。本文将分解过程划分为三个维度，对应原论文 3.3.2 中的三步递进式拆解。
 
-**维度一：时序逻辑分离——从时序算子到场景结构。** P4LTL 中的 `always-implies`（`[] (AP(...) ==> ...)`）模式是最常见的性质结构。当一个规范包含多条 `#LTLProperty`，且前件条件互斥或描述不同状态区域时，每条性质自然对应一个独立的测试场景。例如，有状态防火墙的两条性质分别对应"内部发起放行"和"外部发起丢弃"两个场景。
+**维度一：时序逻辑分离——从时序算子到场景结构。** P4LTL 中的 `always-implies`（`[] (AP(...) ==> ...)`）模式是最常见的性质结构。当一个规范包含多条 `#LTLProperty`，且前件条件互斥或描述不同状态区域时，每条性质自然对应一个独立的测试场景。例如，有状态防火墙的两条性质分别对应内部发起放行和外部发起丢弃两个场景。
 
-时序算子 `X`（next）被映射为场景内的步骤顺序依赖：当前步骤的包处理必须先于下一步骤发生。`<>`（eventually）被映射为"最终需要观测到某个结果"的观测需求。`U`（until）和 `W`（weak-until）被映射为"某条件持续保持直到另一条件成立"的多步骤持续约束，在测试中通常表现为重复发包驱动计数累积的行为。
+时序算子 `X`（next）被映射为场景内的步骤顺序依赖：当前步骤的包处理必须先于下一步骤发生。`<>`（eventually）被映射为最终需要观测到某个结果的观测需求。`U`（until）和 `W`（weak-until）被映射为某条件持续保持直到另一条件成立的多步骤持续约束，在测试中通常表现为重复发包驱动计数累积的行为。
 
 **维度二：控制面约束提取——从 CPI\_SPEC 到规则需求。** 若规范包含 `#CPI_SPEC`，则其中引用的 `Apply(table, action)` 谓词直接指定了控制面需要预配置的表项与动作。即使不存在显式的 `#CPI_SPEC`，当原子命题中引用了 `hit(t)` 或 `key(t, k)` 等流表相关谓词时，也隐含了对应表项必须被配置的控制面前提。系统通过查询 BMv2 JSON 中的表签名获取匹配键与动作参数的具体结构。
 
@@ -61,7 +61,7 @@ P4LTL 规范的分解过程需要将声明式的时序逻辑转化为操作性�
 - `old(...)` 引用：标识了报文处理前的初始值，可辅助推导发送时的字段设置。
 - `meta.X` / `register[idx]`：元数据和寄存器引用，需要通过程序上下文查询确认其语义与位宽。
 
-公平性条件 `#LTLFairness` 则被映射为测试环境的前提约束——它指定了"在什么类型的流量持续到达的条件下"性质应成立，对应测试中需要注入的背景流量模式或包类型过滤条件。
+公平性条件 `#LTLFairness` 则被映射为测试环境的前提约束，指定了在什么类型的流量持续到达的条件下性质应成立，对应测试中需要注入的背景流量模式或包类型过滤条件。
 
 ### （3）场景契约的结构化表示
 
@@ -97,21 +97,21 @@ $$\phi_{12}: s_2.\text{src\_ip} = s_1.\text{dst\_ip} \wedge s_2.\text{dst\_ip} =
 
 1: **// 阶段一：时序逻辑分离与意图分类**
 
-2: $\kappa \leftarrow \text{ClassifyIntent}(\mathcal{P}, C.\Sigma_{\text{src}})$ $\quad\triangleright$ 根据性质模式识别测试类别
+2: $\kappa \leftarrow \text{ClassifyIntent}(\mathcal{P}, C.\Sigma_{\text{src}})$ $\qquad$ // 根据性质模式识别测试类别
 
-3: $\mu \leftarrow \text{DetermineGenerationMode}(\mathcal{C}_{\text{cpi}}, C.P_{\text{bmv2}})$ $\quad\triangleright$ 有 CPI\_SPEC 则需生成控制面
+3: $\mu \leftarrow \text{DetermineGenerationMode}(\mathcal{C}_{\text{cpi}}, C.P_{\text{bmv2}})$ $\qquad$ // 有 CPI\_SPEC 则需生成控制面
 
-4: $\mathcal{T}_{\text{trigger}} \leftarrow \text{ExtractTemporalTriggers}(\mathcal{P})$ $\quad\triangleright$ 提取时序算子结构与状态转换条件
+4: $\mathcal{T}_{\text{trigger}} \leftarrow \text{ExtractTemporalTriggers}(\mathcal{P})$ $\qquad$ // 提取时序算子结构与状态转换条件
 
 5:
 
 6: **// 阶段二：原子命题分析与角色绑定**
 
-7: $R_{\text{abstract}} \leftarrow \text{ExtractRolesFromAP}(\mathcal{P}, \mathcal{F}_{\text{fair}})$ $\quad\triangleright$ 从 AP() 中提取逻辑角色
+7: $R_{\text{abstract}} \leftarrow \text{ExtractRolesFromAP}(\mathcal{P}, \mathcal{F}_{\text{fair}})$ $\qquad$ // 从 AP() 中提取逻辑角色
 
 8: **for each** $r \in R_{\text{abstract}}$ **do**
 
-9: $\quad h \leftarrow \text{BindToTopology}(r, C.T_{\text{topo}})$ $\quad\triangleright$ 查询拓扑工具
+9: $\quad h \leftarrow \text{BindToTopology}(r, C.T_{\text{topo}})$ $\qquad$ // 查询拓扑工具
 
 10: $\quad R \leftarrow R \cup \{(r, h)\}$
 
@@ -121,19 +121,19 @@ $$\phi_{12}: s_2.\text{src\_ip} = s_1.\text{dst\_ip} \wedge s_2.\text{dst\_ip} =
 
 13: **// 阶段三：场景构造与契约填充**
 
-14: $A_{\text{op}} \leftarrow \text{InferEnvironmentActions}(\mathcal{P}, C.P_{\text{bmv2}})$ $\quad\triangleright$ 推断隐含的外部操作前提
+14: $A_{\text{op}} \leftarrow \text{InferEnvironmentActions}(\mathcal{P}, C.P_{\text{bmv2}})$ $\qquad$ // 推断隐含的外部操作前提
 
-15: $O_{\text{obs}} \leftarrow \text{MapPredicatesToObservations}(\mathcal{P})$ $\quad\triangleright$ drop/fwd/寄存器条件→观测需求
+15: $O_{\text{obs}} \leftarrow \text{MapPredicatesToObservations}(\mathcal{P})$ $\qquad$ // drop/fwd/寄存器条件→观测需求
 
 16: $\Lambda \leftarrow \emptyset$
 
 17: **for each** property $\psi_i \in \mathcal{P}$ **do**
 
-18: $\quad \sigma_i \leftarrow \text{DeriveScenarioFromProperty}(\psi_i, \mathcal{T}_{\text{trigger}})$ $\quad\triangleright$ 性质→场景映射
+18: $\quad \sigma_i \leftarrow \text{DeriveScenarioFromProperty}(\psi_i, \mathcal{T}_{\text{trigger}})$ $\qquad$ // 性质→场景映射
 
-19: $\quad \mathcal{S}_i \leftarrow \text{DecomposeToSteps}(\psi_i, \mathcal{F}_{\text{fair}}, C)$ $\quad\triangleright$ 算子→步骤序列
+19: $\quad \mathcal{S}_i \leftarrow \text{DecomposeToSteps}(\psi_i, \mathcal{F}_{\text{fair}}, C)$ $\qquad$ // 算子→步骤序列
 
-20: $\quad \Phi_i \leftarrow \text{InferCrossStepConstraints}(\mathcal{S}_i, C.P_{\text{bmv2}})$ $\quad\triangleright$ 查询字段位宽工具
+20: $\quad \Phi_i \leftarrow \text{InferCrossStepConstraints}(\mathcal{S}_i, C.P_{\text{bmv2}})$ $\qquad$ // 查询字段位宽工具
 
 21: $\quad \Lambda \leftarrow \Lambda \cup \{(\sigma_i, \mathcal{S}_i, \Phi_i)\}$
 
@@ -159,7 +159,7 @@ $$\phi_{12}: s_2.\text{src\_ip} = s_1.\text{dst\_ip} \wedge s_2.\text{dst\_ip} =
 
 ---
 
-算法的关键特征在于：第一，阶段一显式进行时序逻辑分离（第 4 行），将 P4LTL 的时序算子结构提取为状态转换条件，这一步对应原论文算法 3-1 中的"时序逻辑分离"阶段，是后续场景划分的依据；第二，阶段二从原子命题中提取角色信息（第 7 行），将 P4LTL 谓词中的 `meta.direction`、`standard_metadata.ingress_port` 等字段引用映射为逻辑角色；第三，阶段三将每条 `#LTLProperty` 映射为一个测试场景（第 17-22 行），并根据时序算子结构分解为有序步骤；第四，所有关键决策（角色绑定第 9 行、环境推断第 14 行、字段约束推断第 20 行）都通过工具查询获取程序证据。
+该算法分四步完成规约：第一，显式进行时序逻辑分离（第 4 行），将 P4LTL 的时序算子结构提取为状态转换条件，作为后续场景划分的依据；第二，从原子命题中提取角色信息（第 7 行），将 P4LTL 谓词中的 `meta.direction`、`standard_metadata.ingress_port` 等字段引用映射为逻辑角色；第三，将每条 `#LTLProperty` 映射为一个测试场景（第 17-22 行），并根据时序算子结构分解为有序步骤；第四，所有关键决策（角色绑定第 9 行、环境推断第 14 行、字段约束推断第 20 行）都通过工具查询获取程序证据。
 
 **图 3-2 P4LTL 规范到 TaskSpec 的结构化分解过程**
 
