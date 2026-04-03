@@ -1,0 +1,62 @@
+<mxfile>
+  <diagram name="程序上下文工具查询架构" id="fig3-3">
+    <mxGraphModel dx="760" dy="300" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="760" pageHeight="300" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- LEFT: Generation Modules -->
+        <mxCell id="gen_bg" value="" style="rounded=1;fillColor=#E8F5E9;strokeColor=#66BB6A;strokeWidth=1;opacity=40;" vertex="1" parent="1">
+          <mxGeometry x="10" y="15" width="185" height="210" as="geometry"/>
+        </mxCell>
+        <mxCell id="gen_lbl" value="生成模块" style="text;fontSize=10;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#2E7D32;align=center;" vertex="1" parent="1">
+          <mxGeometry x="60" y="20" width="70" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="gen" value="规范语义分析&#xa;契约审查&#xa;报文序列构造&#xa;控制面规则生成&#xa;预言机预测" style="rounded=1;fillColor=#C8E6C9;strokeColor=#43A047;fontSize=10;fontColor=#1B5E20;align=left;spacingLeft=12;spacingTop=6;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="22" y="42" width="160" height="138" as="geometry"/>
+        </mxCell>
+
+        <!-- MIDDLE: Query Dispatcher -->
+        <mxCell id="disp_bg" value="" style="rounded=1;fillColor=#FFF3E0;strokeColor=#FFA726;strokeWidth=1;opacity=40;" vertex="1" parent="1">
+          <mxGeometry x="260" y="15" width="215" height="210" as="geometry"/>
+        </mxCell>
+        <mxCell id="disp" value="ProgramContext&#xa;查询调度器" style="rounded=1;fillColor=#FFE0B2;strokeColor=#FB8C00;fontSize=12;fontStyle=1;fontColor=#E65100;shadow=1;" vertex="1" parent="1">
+          <mxGeometry x="280" y="55" width="175" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="qtypes" value="PARSER_PATH · TABLE_SIGNATURE&#xa;FIELD_WIDTH · HOST_ROLE&#xa;CFG_CONSTRAINT · ..." style="text;fontSize=8;fillColor=none;strokeColor=none;fontColor=#F57F17;align=center;" vertex="1" parent="1">
+          <mxGeometry x="280" y="150" width="175" height="42" as="geometry"/>
+        </mxCell>
+
+        <!-- RIGHT: Data Sources -->
+        <mxCell id="ds_bg" value="" style="rounded=1;fillColor=#E3F2FD;strokeColor=#42A5F5;strokeWidth=1;opacity=40;" vertex="1" parent="1">
+          <mxGeometry x="545" y="15" width="195" height="210" as="geometry"/>
+        </mxCell>
+        <mxCell id="ds_lbl" value="数据源" style="text;fontSize=10;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#1565C0;align=center;" vertex="1" parent="1">
+          <mxGeometry x="605" y="20" width="55" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="ds" value="BMv2 Index&#xa;CFG Graph&#xa;Topology Index&#xa;Source Index" style="rounded=1;fillColor=#BBDEFB;strokeColor=#1E88E5;fontSize=11;fontStyle=1;fontColor=#0D47A1;align=left;spacingLeft=14;spacingTop=8;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="558" y="42" width="168" height="128" as="geometry"/>
+        </mxCell>
+
+        <!-- Arrows: gen → dispatcher (solid) -->
+        <mxCell id="a1" value="查询请求" style="strokeColor=#43A047;strokeWidth=2;fontSize=9;fontColor=#2E7D32;exitX=1;exitY=0.35;entryX=0;entryY=0.4;" edge="1" source="gen" target="disp" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Arrow: dispatcher → data sources (solid) -->
+        <mxCell id="a2" value="数据访问" style="strokeColor=#1E88E5;strokeWidth=2;fontSize=9;fontColor=#1565C0;exitX=1;exitY=0.4;entryX=0;entryY=0.35;" edge="1" source="disp" target="ds" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Return arrows (dashed) -->
+        <mxCell id="r2" style="strokeColor=#42A5F5;dashed=1;dashPattern=6 4;strokeWidth=1.5;exitX=0;exitY=0.75;entryX=1;entryY=0.75;" edge="1" source="ds" target="disp" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="r1" value="证据返回" style="strokeColor=#43A047;dashed=1;dashPattern=6 4;strokeWidth=1.5;fontSize=9;fontColor=#2E7D32;exitX=0;exitY=0.75;entryX=1;entryY=0.7;" edge="1" source="disp" target="gen" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

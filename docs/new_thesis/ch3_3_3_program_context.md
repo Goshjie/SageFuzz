@@ -1,6 +1,6 @@
 # 3.3.3 程序上下文建模与证据查询
 
-3.2.2 节通过链路监测场景表明，正确生成测试工件所需的约束分散在编译产物、控制流图、拓扑和有状态对象定义等多个异构数据源中。本节介绍 P4-BISG 中程序上下文层的设计，包括上下文的形式化定义、索引构建方法和工具化证据查询机制。
+3.2.2 节通过链路监测场景表明，正确生成测试用例所需的约束分散在编译产物、控制流图、拓扑和有状态对象定义等多个异构数据源中。本节介绍 P4-BISG 中程序上下文层的设计，包括上下文的形式化定义、索引构建方法和工具化证据查询机制。
 
 ### （1）程序上下文的形式化定义
 
@@ -109,10 +109,8 @@ $$\text{Query}: \mathcal{Q}_{\text{type}} \times C \times \text{params} \rightar
 | TABLE\_RANKING | — | $G_{\text{cfg}}$ | 按拓扑排序的表深度排列 |
 | SOURCE\_SEMANTIC | 关键词 | $\Sigma_{\text{src}}$ | 相关源码片段与上下文 |
 
-**图 3-3 程序上下文工具查询架构（占位）**
+**图 3-3 程序上下文工具查询架构**
 
-> 图注说明：图中展示生成模块与 ProgramContext 之间的交互架构。左侧为多个生成模块（语义分析、序列构造、规则生成等），中间为统一查询调度层（ProgramContext Query Dispatcher），右侧为四类数据源（BMv2 Index / CFG Graph / Topology Index / Source Index）。查询箭头旁标注具体的查询-响应示例（如语义分析模块查询 TABLE_SIGNATURE("ipv4_lpm") 返回匹配键 {dstAddr: lpm} 与动作 {ipv4_forward, drop}）。
->
-> 绘图风格参考 Confucius Figure 7（Three DSLs）：三列结构，每列用具体实例标注，使读者直观理解查询调度的工作方式。
+> 图注：左侧为各生成模块，中间为 ProgramContext 统一查询调度器（支持 PARSER_PATH、TABLE_SIGNATURE、FIELD_WIDTH 等查询类型），右侧为四类数据源（BMv2 Index / CFG Graph / Topology Index / Source Index）。实线表示查询请求，虚线表示证据返回。
 
 这种工具化查询设计与 3.2.2 节中分析的挑战直接对应。以链路监测程序为例，序列构造模块在生成 probe 报文时：首先通过 PARSER\_PATH 查询获取 `probe_header` 的解析路径与先决条件；然后通过 FIELD\_WIDTH 查询确定各探针字段的位宽；接着通过 STATEFUL\_OBJECT 查询获取 `byte_cnt_reg` 的索引方式；最后通过 HOST\_ROLE 查询确定 probe 应从哪个主机注入。整个过程中，生成模块无需处理完整的编译产物文本，只需发起四次精确查询即可获取所有必要约束。

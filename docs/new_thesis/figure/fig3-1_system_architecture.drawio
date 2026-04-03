@@ -1,0 +1,146 @@
+<mxfile>
+  <diagram name="P4-BISG 系统总体架构" id="fig3-1">
+    <mxGraphModel dx="860" dy="490" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="860" pageHeight="490" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- Layer backgrounds -->
+        <mxCell id="L1" value="" style="rounded=1;fillColor=#E8F5E9;strokeColor=#66BB6A;strokeWidth=1.5;arcSize=6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="10" width="780" height="68" as="geometry"/>
+        </mxCell>
+        <mxCell id="L2" value="" style="rounded=1;fillColor=#E3F2FD;strokeColor=#42A5F5;strokeWidth=1.5;arcSize=6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="95" width="780" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="L3" value="" style="rounded=1;fillColor=#FFF3E0;strokeColor=#FFA726;strokeWidth=1.5;arcSize=6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="172" width="780" height="185" as="geometry"/>
+        </mxCell>
+        <mxCell id="L4" value="" style="rounded=1;fillColor=#F3E5F5;strokeColor=#AB47BC;strokeWidth=1.5;arcSize=6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="374" width="780" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- Layer labels -->
+        <mxCell id="L1_lbl" value="输入层" style="text;fontSize=10;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#2E7D32;align=left;" vertex="1" parent="1">
+          <mxGeometry x="52" y="28" width="60" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="L2_lbl" value="程序上下文层" style="text;fontSize=10;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#1565C0;align=left;" vertex="1" parent="1">
+          <mxGeometry x="52" y="110" width="100" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="L3_lbl" value="生成与调度层" style="text;fontSize=10;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#E65100;align=left;" vertex="1" parent="1">
+          <mxGeometry x="52" y="178" width="100" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="L4_lbl" value="结果输出层" style="text;fontSize=10;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#7B1FA2;align=left;" vertex="1" parent="1">
+          <mxGeometry x="52" y="390" width="80" height="16" as="geometry"/>
+        </mxCell>
+
+        <!-- Input layer -->
+        <mxCell id="in_spec" value="P4LTL 时序规范" style="rounded=1;fillColor=#C8E6C9;strokeColor=#43A047;fontSize=11;fontStyle=1;fontColor=#1B5E20;" vertex="1" parent="1">
+          <mxGeometry x="150" y="22" width="148" height="36" as="geometry"/>
+        </mxCell>
+        <mxCell id="in_art" value="编译产物 · 拓扑 · CFG" style="rounded=1;fillColor=#C8E6C9;strokeColor=#43A047;fontSize=10;fontColor=#1B5E20;" vertex="1" parent="1">
+          <mxGeometry x="520" y="22" width="185" height="36" as="geometry"/>
+        </mxCell>
+
+        <!-- Program Context layer -->
+        <mxCell id="pctx" value="ProgramContext（统一证据索引 + 工具查询接口）" style="rounded=1;fillColor=#BBDEFB;strokeColor=#1E88E5;fontSize=11;fontStyle=1;fontColor=#0D47A1;shadow=1;" vertex="1" parent="1">
+          <mxGeometry x="240" y="105" width="370" height="36" as="geometry"/>
+        </mxCell>
+
+        <!-- Generation modules -->
+        <mxCell id="m1" value="规范语义&#xa;分析" style="rounded=1;fillColor=#FFE0B2;strokeColor=#FB8C00;fontSize=10;fontStyle=1;fontColor=#E65100;" vertex="1" parent="1">
+          <mxGeometry x="72" y="220" width="82" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="m2" value="契约&#xa;审查" style="rounded=1;fillColor=#FFE0B2;strokeColor=#FB8C00;fontSize=10;fontColor=#E65100;" vertex="1" parent="1">
+          <mxGeometry x="186" y="220" width="68" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="m3" value="报文序列&#xa;构造" style="rounded=1;fillColor=#FFE0B2;strokeColor=#FB8C00;fontSize=10;fontStyle=1;fontColor=#E65100;" vertex="1" parent="1">
+          <mxGeometry x="286" y="220" width="82" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="m4" value="控制面&#xa;规则生成" style="rounded=1;fillColor=#FFE0B2;strokeColor=#FB8C00;fontSize=10;fontStyle=1;fontColor=#E65100;" vertex="1" parent="1">
+          <mxGeometry x="400" y="220" width="82" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="m5" value="预言机&#xa;预测" style="rounded=1;fillColor=#FFE0B2;strokeColor=#FB8C00;fontSize=10;fontColor=#E65100;" vertex="1" parent="1">
+          <mxGeometry x="514" y="220" width="72" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="m6" value="输出&#xa;封装" style="rounded=1;fillColor=#FFE0B2;strokeColor=#FB8C00;fontSize=10;fontColor=#E65100;" vertex="1" parent="1">
+          <mxGeometry x="618" y="220" width="68" height="40" as="geometry"/>
+        </mxCell>
+
+        <!-- Module chain arrows -->
+        <mxCell id="e12" style="strokeColor=#FB8C00;strokeWidth=1.5;" edge="1" source="m1" target="m2" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e23" style="strokeColor=#FB8C00;strokeWidth=1.5;" edge="1" source="m2" target="m3" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e34" style="strokeColor=#FB8C00;strokeWidth=1.5;" edge="1" source="m3" target="m4" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e45" style="strokeColor=#FB8C00;strokeWidth=1.5;" edge="1" source="m4" target="m5" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e56" style="strokeColor=#FB8C00;strokeWidth=1.5;" edge="1" source="m5" target="m6" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- Deterministic verification -->
+        <mxCell id="verify" value="确定性校验" style="rounded=1;fillColor=#FFCDD2;strokeColor=#EF5350;fontSize=10;fontStyle=1;fontColor=#B71C1C;dashed=1;dashPattern=8 4;" vertex="1" parent="1">
+          <mxGeometry x="260" y="310" width="330" height="26" as="geometry"/>
+        </mxCell>
+
+        <!-- Feedback: verify → m3, m4 -->
+        <mxCell id="fb1" style="strokeColor=#EF5350;dashed=1;strokeWidth=1.5;exitX=0.25;exitY=0;entryX=0.5;entryY=1;" edge="1" source="verify" target="m3" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="fb2" style="strokeColor=#EF5350;dashed=1;strokeWidth=1.5;exitX=0.65;exitY=0;entryX=0.5;entryY=1;" edge="1" source="verify" target="m4" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="fb_lbl" value="修复反馈" style="text;fontSize=8;fontStyle=2;fillColor=none;strokeColor=none;fontColor=#EF5350;" vertex="1" parent="1">
+          <mxGeometry x="608" y="303" width="55" height="14" as="geometry"/>
+        </mxCell>
+
+        <!-- Output layer -->
+        <mxCell id="output" value="结构化测试用例 (Testcase JSON)" style="rounded=1;fillColor=#E1BEE7;strokeColor=#8E24AA;fontSize=11;fontStyle=1;fontColor=#4A148C;shadow=1;" vertex="1" parent="1">
+          <mxGeometry x="265" y="385" width="280" height="36" as="geometry"/>
+        </mxCell>
+
+        <!-- Cross-layer arrows -->
+        <!-- P4LTL spec → m1 -->
+        <mxCell id="a_spec" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#2E7D32;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="in_spec" target="m1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="224" y="82"/>
+              <mxPoint x="113" y="82"/>
+              <mxPoint x="113" y="200"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Artifacts → ProgramContext -->
+        <mxCell id="a_art" style="strokeColor=#43A047;strokeWidth=1.5;exitX=0.5;exitY=1;entryX=0.75;entryY=0;" edge="1" source="in_art" target="pctx" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- PCtx ··> modules (dashed tool queries) -->
+        <mxCell id="tq1" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#42A5F5;dashed=1;dashPattern=6 4;strokeWidth=1.5;exitX=0.1;exitY=1;entryX=0.5;entryY=0;" edge="1" source="pctx" target="m1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="277" y="160"/>
+              <mxPoint x="113" y="160"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="tq2" style="strokeColor=#42A5F5;dashed=1;dashPattern=6 4;strokeWidth=1.5;exitX=0.4;exitY=1;entryX=0.5;entryY=0;" edge="1" source="pctx" target="m3" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="tq3" style="strokeColor=#42A5F5;dashed=1;dashPattern=6 4;strokeWidth=1.5;exitX=0.55;exitY=1;entryX=0.5;entryY=0;" edge="1" source="pctx" target="m4" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="tq_lbl" value="工具查询" style="text;fontSize=8;fontStyle=2;fillColor=none;strokeColor=none;fontColor=#42A5F5;" vertex="1" parent="1">
+          <mxGeometry x="170" y="156" width="55" height="14" as="geometry"/>
+        </mxCell>
+
+        <!-- m6 → Output -->
+        <mxCell id="a_out" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#8E24AA;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="m6" target="output" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="652" y="365"/>
+              <mxPoint x="405" y="365"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -1,0 +1,103 @@
+<mxfile>
+  <diagram name="多阶段协同生成流水线" id="fig3-4">
+    <mxGraphModel dx="860" dy="320" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="860" pageHeight="320" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- Stage A -->
+        <mxCell id="a" value="报文序列&#xa;构造" style="rounded=1;fillColor=#BBDEFB;strokeColor=#1E88E5;fontSize=11;fontStyle=1;fontColor=#0D47A1;" vertex="1" parent="1">
+          <mxGeometry x="20" y="30" width="150" height="55" as="geometry"/>
+        </mxCell>
+        <mxCell id="va" value="确定性校验" style="rounded=1;fillColor=#FFCDD2;strokeColor=#EF5350;fontSize=9;fontStyle=1;fontColor=#B71C1C;dashed=1;dashPattern=6 3;" vertex="1" parent="1">
+          <mxGeometry x="30" y="142" width="130" height="26" as="geometry"/>
+        </mxCell>
+        <mxCell id="va_lbl" value="V_packet" style="text;fontSize=8;fontStyle=2;fillColor=none;strokeColor=none;fontColor=#E53935;" vertex="1" parent="1">
+          <mxGeometry x="60" y="170" width="60" height="14" as="geometry"/>
+        </mxCell>
+
+        <!-- Stage B -->
+        <mxCell id="b" value="控制面&#xa;规则生成" style="rounded=1;fillColor=#C8E6C9;strokeColor=#43A047;fontSize=11;fontStyle=1;fontColor=#1B5E20;" vertex="1" parent="1">
+          <mxGeometry x="225" y="30" width="150" height="55" as="geometry"/>
+        </mxCell>
+        <mxCell id="vb" value="确定性校验" style="rounded=1;fillColor=#FFCDD2;strokeColor=#EF5350;fontSize=9;fontStyle=1;fontColor=#B71C1C;dashed=1;dashPattern=6 3;" vertex="1" parent="1">
+          <mxGeometry x="235" y="142" width="130" height="26" as="geometry"/>
+        </mxCell>
+        <mxCell id="vb_lbl" value="V_entity" style="text;fontSize=8;fontStyle=2;fillColor=none;strokeColor=none;fontColor=#E53935;" vertex="1" parent="1">
+          <mxGeometry x="268" y="170" width="60" height="14" as="geometry"/>
+        </mxCell>
+
+        <!-- Stage C -->
+        <mxCell id="c" value="预言机&#xa;预测" style="rounded=1;fillColor=#FFE0B2;strokeColor=#FB8C00;fontSize=11;fontStyle=1;fontColor=#E65100;" vertex="1" parent="1">
+          <mxGeometry x="430" y="30" width="140" height="55" as="geometry"/>
+        </mxCell>
+        <mxCell id="vc" value="确定性校验" style="rounded=1;fillColor=#FFCDD2;strokeColor=#EF5350;fontSize=9;fontStyle=1;fontColor=#B71C1C;dashed=1;dashPattern=6 3;" vertex="1" parent="1">
+          <mxGeometry x="435" y="142" width="130" height="26" as="geometry"/>
+        </mxCell>
+        <mxCell id="vc_lbl" value="V_oracle" style="text;fontSize=8;fontStyle=2;fillColor=none;strokeColor=none;fontColor=#E53935;" vertex="1" parent="1">
+          <mxGeometry x="468" y="170" width="60" height="14" as="geometry"/>
+        </mxCell>
+
+        <!-- Stage D -->
+        <mxCell id="d" value="执行序列&#xa;组装" style="rounded=1;fillColor=#E1BEE7;strokeColor=#8E24AA;fontSize=11;fontStyle=1;fontColor=#4A148C;" vertex="1" parent="1">
+          <mxGeometry x="630" y="30" width="150" height="55" as="geometry"/>
+        </mxCell>
+        <mxCell id="vd" value="确定性校验" style="rounded=1;fillColor=#FFCDD2;strokeColor=#EF5350;fontSize=9;fontStyle=1;fontColor=#B71C1C;dashed=1;dashPattern=6 3;" vertex="1" parent="1">
+          <mxGeometry x="640" y="142" width="130" height="26" as="geometry"/>
+        </mxCell>
+        <mxCell id="vd_lbl" value="V_exec" style="text;fontSize=8;fontStyle=2;fillColor=none;strokeColor=none;fontColor=#E53935;" vertex="1" parent="1">
+          <mxGeometry x="677" y="170" width="55" height="14" as="geometry"/>
+        </mxCell>
+
+        <!-- Horizontal flow arrows -->
+        <mxCell id="eab" value="PacketSequence" style="strokeColor=#1E88E5;strokeWidth=2;fontSize=8;fontStyle=1;fontColor=#1565C0;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" source="a" target="b" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="ebc" value="RuleEntities" style="strokeColor=#43A047;strokeWidth=2;fontSize=8;fontStyle=1;fontColor=#2E7D32;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" source="b" target="c" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="ecd" value="OraclePrediction" style="strokeColor=#FB8C00;strokeWidth=2;fontSize=8;fontStyle=1;fontColor=#E65100;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" source="c" target="d" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Down arrows to verification -->
+        <mxCell id="dav" style="strokeColor=#E53935;strokeWidth=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="a" target="va" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="dbv" style="strokeColor=#E53935;strokeWidth=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="b" target="vb" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="dcv" style="strokeColor=#E53935;strokeWidth=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="c" target="vc" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ddv" style="strokeColor=#E53935;strokeWidth=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="d" target="vd" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- Dashed feedback arrows -->
+        <mxCell id="fba" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#EF5350;dashed=1;strokeWidth=1.5;exitX=0;exitY=0.5;entryX=0;entryY=1;" edge="1" source="va" target="a" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="10" y="155"/>
+              <mxPoint x="10" y="85"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fbb" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#EF5350;dashed=1;strokeWidth=1.5;exitX=0;exitY=0.5;entryX=0;entryY=1;" edge="1" source="vb" target="b" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="215" y="155"/>
+              <mxPoint x="215" y="85"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Output -->
+        <mxCell id="out" value="Testcase JSON" style="rounded=1;fillColor=#E1BEE7;strokeColor=#8E24AA;fontSize=11;fontStyle=1;fontColor=#4A148C;shadow=1;" vertex="1" parent="1">
+          <mxGeometry x="645" y="235" width="135" height="36" as="geometry"/>
+        </mxCell>
+        <mxCell id="ed_out" style="strokeColor=#8E24AA;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="vd" target="out" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Feedback label -->
+        <mxCell id="fb_lbl" value="修复反馈" style="text;fontSize=8;fontStyle=2;fillColor=none;strokeColor=none;fontColor=#EF5350;" vertex="1" parent="1">
+          <mxGeometry x="2" y="108" width="55" height="14" as="geometry"/>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
